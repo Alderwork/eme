@@ -69,11 +69,16 @@ Only sessions, windows, and worktrees that actually exist are shown. Metadata th
 
 A single-invocation cache (1 second TTL) avoids redundant `tmux`/`git` list calls while drawing the dashboard or running a command.
 
-### 5. Agent detection is explicit and best-effort
+### 5. Multi-agent status monitoring is a first-class feature
 
-When eme launches an agent, it records the pane PID. While the dashboard is open, it polls every 2 seconds to check whether the pane still exists. Pane-title heuristics are used as a fallback only.
+eme's core job is to show, across every worktree, which agent is `idle`, `working`, `waiting-for-input`, or `exited`, so the user can jump to the one that needs them. This status display is a primary feature, not an afterthought.
 
-Agent status is explicitly best-effort. eme does not try to control the agent after launch.
+Detection is layered:
+
+- When eme launches an agent, it records the pane PID. While the dashboard is open, it polls every 2 seconds. A dead pane means `exited`.
+- Distinguishing `working` from `waiting-for-input` requires more than a liveness check. That detection mechanism — likely pane-output quiescence plus prompt-pattern heuristics — is deferred to its own follow-up design and is documented as best-effort.
+
+eme still does not try to *control* the agent after launch. It observes and surfaces status, and lets the user act.
 
 ### 6. Errors use a structured, conversational model
 
