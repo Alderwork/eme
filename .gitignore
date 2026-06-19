@@ -1,2 +1,5 @@
 /eme
 *.exe
+
+# subagent-driven-development scratch
+.superpowers/
