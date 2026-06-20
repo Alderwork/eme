@@ -71,3 +71,13 @@ func TestNewAgentPicker_DefaultHighlightSkipsUninstalled(t *testing.T) {
 		t.Errorf("initial cursor on %q, want first installed 'claude'", got)
 	}
 }
+
+func TestAgentPicker_UpAtTopIsNoop(t *testing.T) {
+	m := NewAgentPicker(sampleItems(), "claude") // cursor on claude (index 0)
+	m = key(m, tea.KeyUp)                        // already at top → no-op
+	m = key(m, tea.KeyEnter)
+	sel, ok := m.Chosen()
+	if !ok || sel.Name != "claude" {
+		t.Fatalf("Up at top then Enter = %+v, %v; want claude, true", sel, ok)
+	}
+}

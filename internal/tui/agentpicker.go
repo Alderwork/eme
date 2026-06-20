@@ -20,10 +20,10 @@ type AgentItem struct {
 type AgentPickerModel struct {
 	items     []AgentItem
 	cursor    int
-	height    int
 	cancelled bool
 	chose     bool
 	selected  AgentItem
+	err       error
 }
 
 // NewAgentPicker creates a picker. The cursor starts on the row whose Name
@@ -79,10 +79,8 @@ func (m *AgentPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyDown:
 			m.move(1)
 		}
-	case tea.WindowSizeMsg:
-		m.height = msg.Height
 	case error:
-		m.cancelled = true
+		m.err = msg
 		return m, tea.Quit
 	}
 	return m, nil
@@ -105,6 +103,9 @@ func (m *AgentPickerModel) move(dir int) {
 
 // View implements tea.Model.
 func (m *AgentPickerModel) View() string {
+	if m.err != nil {
+		return errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err))
+	}
 	b := titleStyle.Render("Pick an agent") + "\n\n"
 	for i, it := range m.items {
 		prefix := "  "
@@ -117,7 +118,7 @@ func (m *AgentPickerModel) View() string {
 		case it.Installed:
 			b += fmt.Sprintf("%s%s\n", prefix, it.Name)
 		default:
-			b += fmt.Sprintf("%s%s\n", prefix, mutedStyle.Render(it.Name+"  (install to use)"))
+			b += fmt.Sprintf("%s%s\n", prefix, mutedStyle.Render(it.Name+" (install to use)"))
 		}
 	}
 	b += "\n" + helpStyle.Render("enter to select, esc to cancel, ↑/↓ to move")
