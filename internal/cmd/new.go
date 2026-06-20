@@ -97,7 +97,7 @@ func pickFolder() (folder string, cancelled bool, err error) {
 		return "", false, fmt.Errorf("scan folders: %w", err)
 	}
 	picker := tui.NewFolderPicker(items)
-	if _, err := tea.NewProgram(picker).Run(); err != nil {
+	if _, err := tea.NewProgram(picker, tea.WithAltScreen()).Run(); err != nil {
 		return "", false, fmt.Errorf("picker: %w", err)
 	}
 	if picker.Cancelled() {
@@ -457,7 +457,7 @@ func registerNestedBareProject(root string) error {
 func createWorktreePrompt(sessionArg, name string) error {
 	if name == "" {
 		input := tui.NewInput("Worktree name")
-		if _, err := tea.NewProgram(input).Run(); err != nil {
+		if _, err := tea.NewProgram(input, tea.WithAltScreen()).Run(); err != nil {
 			return fmt.Errorf("input: %w", err)
 		}
 		if input.Cancelled() {

@@ -43,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dashboard `d` (kill) now works: it confirms, then removes the session. Previously it launched `eme kill` without the required `--force` and silently did nothing.
 - Cancelling the folder picker (Ctrl+C/Esc) in `eme new` no longer adopts the current directory and jumps to a stray tmux session — it simply returns.
 - A standalone bare git repository is now classified correctly (bare, out of scope) instead of as a subdirectory, so `eme doctor`/`eme new` report it accurately.
+- Running `eme` no longer dirties the shell. The dashboard renders on the alternate screen, so it leaves no scrollback behind, and switching with Enter now quits the TUI cleanly before exec'ing `eme switch` instead of replacing the process mid-render and leaving the terminal in raw/alt-screen state. The `eme new` folder picker and worktree-name prompt also use the alternate screen.
 
 ### Planned
 

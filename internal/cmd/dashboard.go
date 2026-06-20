@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -28,10 +29,46 @@ func runDashboard() error {
 		}
 		return buildSessionViews(rs.Sessions), nil
 	})
-	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
+	finalModel, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
+	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
-	return nil
+	return switchFromModel(finalModel)
+}
+
+// switchFromModel execs `eme switch` if the dashboard recorded a switch target
+// (Enter), otherwise returns nil. It runs after bubbletea has restored the
+// terminal. Split out from runDashboard so the cross-package handoff is testable
+// without a TTY.
+func switchFromModel(finalModel tea.Model) error {
+	dm, ok := finalModel.(*tui.DashboardModel)
+	if !ok {
+		return nil
+	}
+	session, worktree, ok := dm.SwitchTarget()
+	if !ok {
+		return nil
+	}
+	return execSwitch(session, worktree)
+}
+
+// execReplace replaces the current process image. It is a package var so tests
+// can capture the argv without actually exec'ing.
+var execReplace = syscall.Exec
+
+// execSwitch replaces the current process with `eme switch <session> [worktree]`.
+// It runs only after the dashboard's bubbletea program has exited and restored
+// the terminal, so the handoff happens on a clean terminal.
+func execSwitch(session, worktree string) error {
+	binary, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("locate eme binary: %w", err)
+	}
+	argv := []string{"eme", "switch", session}
+	if worktree != "" {
+		argv = append(argv, worktree)
+	}
+	return execReplace(binary, argv, os.Environ())
 }
 
 func isTerminal() bool {

@@ -110,6 +110,29 @@ func TestDashboardViewContainsMotifAndStatus(t *testing.T) {
 	}
 }
 
+func TestDashboardEnterRecordsSwitchAndQuits(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	if _, _, ok := m.SwitchTarget(); ok {
+		t.Fatal("SwitchTarget should be empty before Enter")
+	}
+	m.cursor = 1 // myapp/feat
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+
+	session, worktree, ok := m.SwitchTarget()
+	if !ok || session != "myapp" || worktree != "feat" {
+		t.Fatalf("SwitchTarget = (%q,%q,%v), want (myapp,feat,true)", session, worktree, ok)
+	}
+	if cmd == nil {
+		t.Fatal("Enter should return a command")
+	}
+	// Enter must quit cleanly (so the terminal is restored before the caller
+	// execs `eme switch`), not exec from inside a command.
+	if _, isQuit := cmd().(tea.QuitMsg); !isQuit {
+		t.Error("Enter should return tea.Quit so bubbletea restores the terminal")
+	}
+}
+
 // TestDashboardSelectedRowIsHighlightBar locks the headline visual: the worktree
 // under the cursor renders as a full-width background highlight bar, and other
 // rows do not.

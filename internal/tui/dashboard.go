@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -64,6 +63,14 @@ type DashboardModel struct {
 	notice   string
 	pending  *killTarget
 	showHelp bool
+	// leaving records that the user chose to switch (Enter) to leaveSession/
+	// leaveWorktree. When true, the model has quit and the cmd layer execs
+	// `eme switch` afterward, once bubbletea has restored the terminal. An
+	// explicit flag (not an empty-string check) keeps this independent of how
+	// session IDs are formed.
+	leaving       bool
+	leaveSession  string
+	leaveWorktree string
 	// reload re-reads the view-model after a child action returns. May be nil
 	// (tests), in which case the list is not refreshed.
 	reload func() ([]SessionView, error)
@@ -151,7 +158,12 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter", "o":
 			if w := m.selected(); w != nil {
-				return m, m.switchTo(w.SessionID, w.Name)
+				// Record the target and quit cleanly; the cmd layer execs
+				// `eme switch` after bubbletea restores the terminal, so the
+				// shell is never left in raw/alt-screen state.
+				m.leaving = true
+				m.leaveSession, m.leaveWorktree = w.SessionID, w.Name
+				return m, tea.Quit
 			}
 		case "n":
 			return m, m.runChild("new", "--no-switch")
@@ -340,15 +352,12 @@ func (m *DashboardModel) runChild(args ...string) tea.Cmd {
 	})
 }
 
-// switchTo replaces this process with `eme switch <session> <worktree>`, leaving
-// the dashboard. On success it never returns.
-func (m *DashboardModel) switchTo(sessionID, worktree string) tea.Cmd {
-	return func() tea.Msg {
-		binary, err := os.Executable()
-		if err != nil {
-			return actionFinishedMsg{err: fmt.Errorf("locate eme binary: %w", err)}
-		}
-		err = syscall.Exec(binary, []string{"eme", "switch", sessionID, worktree}, os.Environ())
-		return actionFinishedMsg{err: fmt.Errorf("exec eme switch: %w", err)}
+// SwitchTarget reports the worktree the user chose to switch to with Enter, if
+// any. The dashboard records it and quits; the caller execs `eme switch` once
+// bubbletea has restored the terminal.
+func (m *DashboardModel) SwitchTarget() (session, worktree string, ok bool) {
+	if !m.leaving {
+		return "", "", false
 	}
+	return m.leaveSession, m.leaveWorktree, true
 }
