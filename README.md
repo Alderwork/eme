@@ -46,6 +46,7 @@ eme new            # fuzzy folder picker → new project + main worktree
 eme switch <id>    # switch to session/window
 eme kill <id>      # remove worktree + kill window
 eme agent <id>     # start/stop/toggle agent
+eme agent <id> --pick  # choose the worktree's agent from the catalog
 eme doctor         # verify environment
 eme --version      # print version
 ```
@@ -66,7 +67,7 @@ command = "claude --resume"
 
 You can override the agent per folder or per worktree from the dashboard.
 
-When you run `eme new`, eme shows an agent picker (claude, codex, gemini, opencode, plus anything you add) listing what's installed on your PATH; your choice launches in `main` and becomes the project default. Press `a` on a worktree to toggle its agent, or `A` to pick a different one.
+When you run `eme new`, eme shows an agent picker (claude, codex, gemini, opencode, plus any `[[agents]]` you add) listing what's installed on your PATH; your choice launches in `main` and becomes the project default. Press `a` on a worktree to toggle its agent, or `A` to pick a different one.
 
 ## Requirements
 
