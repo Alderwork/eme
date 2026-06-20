@@ -19,10 +19,17 @@ func TestCatalog_IncludesBuiltins(t *testing.T) {
 func TestCatalog_UserOverridesBuiltinCommandByName(t *testing.T) {
 	c := Default()
 	c.Agents = []AgentSpec{{Name: "claude", Command: "claude --resume"}}
+	found := false
 	for _, a := range c.Catalog() {
-		if a.Name == "claude" && a.Command != "claude --resume" {
-			t.Errorf("claude command = %q, want override %q", a.Command, "claude --resume")
+		if a.Name == "claude" {
+			found = true
+			if a.Command != "claude --resume" {
+				t.Errorf("claude command = %q, want %q", a.Command, "claude --resume")
+			}
 		}
+	}
+	if !found {
+		t.Errorf("builtin 'claude' missing from catalog after override")
 	}
 }
 
