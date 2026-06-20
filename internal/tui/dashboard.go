@@ -29,6 +29,18 @@ var (
 	branchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 	addStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
 	delStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555"))
+	agentStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#56B6C2"))
+
+	// selectedStyle is the full-width highlight bar for the row under the cursor.
+	selectedStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("#3B4252")).
+			Foreground(lipgloss.Color("#ECEFF4")).
+			Bold(true)
+	// panelStyle is the rounded border wrapping the whole dashboard.
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("#4C566A")).
+			Padding(0, 1)
 )
 
 // rowRef points at a worktree within the view-model.
@@ -172,75 +184,128 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// View implements tea.Model.
+// View implements tea.Model. It renders a single rounded-border panel: a header
+// (branding + rhyme on the left, the "N needs you" counter on the right), a
+// session → worktree tree whose rows lead with agent status, and a footer pinned
+// to the bottom. The worktree under the cursor is a full-width highlight bar.
 func (m *DashboardModel) View() string {
-	var b strings.Builder
+	width, height := m.width, m.height
+	if width < 40 {
+		width = 80 // before the first WindowSizeMsg
+	}
+	if height < 10 {
+		height = 24
+	}
+	boxWidth := width - 2 // total minus the left/right border columns
+	inner := width - 4    // text area inside the border + horizontal padding
+	if inner < 24 {
+		inner = 24
+	}
+	innerHeight := height - 2 // minus the top/bottom border rows
 
-	left := titleStyle.Render("╶╶ eme ╶╶") + "  " + rhymeStyle.Render("eeny · meeny · miny · moe")
+	var lines []string
+
+	// Header: branding + rhyme (left), "N needs you" (right), then a rule.
+	left := titleStyle.Render("eme") + "  " + rhymeStyle.Render("eeny · meeny · miny · moe")
 	right := ""
 	if n := m.needsYouCount(); n > 0 {
 		right = needsYouStyle.Render(fmt.Sprintf("%d needs you", n))
 	}
-	b.WriteString(m.headerLine(left, right))
-	b.WriteString("\n\n")
+	lines = append(lines, fitLine(left, right, inner))
+	lines = append(lines, mutedStyle.Render(strings.Repeat("─", inner)))
 
+	// Tree body.
 	if len(m.rows) == 0 {
-		b.WriteString(mutedStyle.Render("No sessions. Press 'n' to create one.") + "\n")
+		lines = append(lines, "", mutedStyle.Render("No sessions. Press 'n' to create one."))
 	} else {
 		rowi := 0
 		for si := range m.views {
 			sv := m.views[si]
-			b.WriteString(fmt.Sprintf(" %d  %s  %s\n", si+1, sessionStyle.Render(sv.DisplayName), rootStyle.Render(sv.Root)))
+			head := " " + sessionStyle.Render(fmt.Sprintf("%d  %s", si+1, sv.DisplayName))
+			rootStr := sv.Root
+			if rootMax := inner - lipgloss.Width(head) - 1; rootMax > 1 {
+				rootStr = truncate(sv.Root, rootMax)
+			}
+			lines = append(lines, fitLine(head, rootStyle.Render(rootStr), inner))
 			for wi := range sv.Worktrees {
-				w := sv.Worktrees[wi]
-				marker := "  "
-				nameCell := fmt.Sprintf("%-14s", w.Name)
-				if rowi == m.cursor {
-					marker = cursorStyle.Render("▸ ")
-					nameCell = cursorStyle.Render(nameCell)
-				}
-				status := statusStyle[w.Status].Render(w.Status.Glyph() + " " + w.Status.Label())
-				trailer := w.AgentLabel
-				if trailer == "" && w.HasDiff {
-					trailer = addStyle.Render(fmt.Sprintf("+%d", w.Added)) + " " + delStyle.Render(fmt.Sprintf("-%d", w.Deleted))
-				}
-				row := fmt.Sprintf("  %s%s %s  %s",
-					marker, nameCell, branchStyle.Render(fmt.Sprintf("%-16s", w.Branch)), status)
-				if trailer != "" {
-					row += "  " + trailer
-				}
-				b.WriteString(row + "\n")
+				lines = append(lines, m.worktreeLine(sv.Worktrees[wi], rowi == m.cursor, inner))
 				rowi++
 			}
-			b.WriteString("\n")
+			lines = append(lines, "")
 		}
 	}
 
+	// Bottom block: a transient notice/confirm line then the footer, pinned to
+	// the panel's last rows.
+	var bottom []string
 	if m.pending != nil {
-		b.WriteString(errorStyle.Render("kill "+m.pending.label+"?  y = confirm, any other key = cancel") + "\n")
+		bottom = append(bottom, errorStyle.Render("kill "+m.pending.label+"?  y = confirm · any other key = cancel"))
 	} else if m.notice != "" {
-		b.WriteString(errorStyle.Render(m.notice) + "\n")
+		bottom = append(bottom, errorStyle.Render(m.notice))
 	}
-
 	if m.showHelp {
-		b.WriteString(helpStyle.Render("n new · c worktree · a agent · ↵/o open · d kill · q quit · ?") + "\n")
+		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · n new · c worktree · a agent · d kill · q quit · ?"))
 	} else {
-		b.WriteString(helpStyle.Render("?: help") + "\n")
+		bottom = append(bottom, helpStyle.Render("↑↓ move · ↵ open · n new · d kill · ? more · q quit"))
 	}
-	return b.String()
+	for len(lines)+len(bottom) < innerHeight {
+		lines = append(lines, "")
+	}
+	lines = append(lines, bottom...)
+
+	return panelStyle.Width(boxWidth).Render(strings.Join(lines, "\n"))
 }
 
-// headerLine right-aligns right against the known width, falling back to a small
-// gap when width is unknown.
-func (m *DashboardModel) headerLine(left, right string) string {
-	if right == "" {
-		return left
-	}
-	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
-	if gap < 2 {
-		gap = 2
+// fitLine places left at the start and right-aligns right within width columns,
+// measuring display width so ANSI styling does not skew the gap.
+func fitLine(left, right string, width int) string {
+	gap := width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// worktreeLine renders one worktree row, status-first. The selected row is a
+// full-width highlight bar in plain text; other rows use per-status colored
+// cells. Columns are padded before styling so they stay aligned.
+func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) string {
+	statusRaw := fmt.Sprintf("%s %-8s", w.Status.Glyph(), w.Status.Label())
+	nameRaw := fmt.Sprintf("%-14s", truncate(w.Name, 14))
+	branchRaw := fmt.Sprintf("%-16s", truncate(w.Branch, 16))
+
+	if selected {
+		trailer := w.AgentLabel
+		if trailer == "" && w.HasDiff {
+			trailer = fmt.Sprintf("+%d -%d", w.Added, w.Deleted)
+		}
+		text := fmt.Sprintf("  %s  %s  %s  %s", statusRaw, nameRaw, branchRaw, trailer)
+		return selectedStyle.Width(inner).MaxWidth(inner).Render(text)
+	}
+
+	trailerCell := ""
+	if w.AgentLabel != "" {
+		trailerCell = agentStyle.Render(w.AgentLabel)
+	} else if w.HasDiff {
+		trailerCell = addStyle.Render(fmt.Sprintf("+%d", w.Added)) + " " + delStyle.Render(fmt.Sprintf("-%d", w.Deleted))
+	}
+	return fmt.Sprintf("  %s  %s  %s  %s",
+		statusStyle[w.Status].Render(statusRaw), nameRaw, branchStyle.Render(branchRaw), trailerCell)
+}
+
+// truncate shortens s to at most max display columns, adding an ellipsis.
+func truncate(s string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	return string(r[:max-1]) + "…"
 }
 
 // refresh re-reads the view-model after a child action, recording any error as a

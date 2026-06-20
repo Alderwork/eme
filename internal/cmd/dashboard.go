@@ -28,7 +28,7 @@ func runDashboard() error {
 		}
 		return buildSessionViews(rs.Sessions), nil
 	})
-	if _, err := tea.NewProgram(model).Run(); err != nil {
+	if _, err := tea.NewProgram(model, tea.WithAltScreen()).Run(); err != nil {
 		return fmt.Errorf("dashboard: %w", err)
 	}
 	return nil

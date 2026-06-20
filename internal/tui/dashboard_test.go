@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func runeKey(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -101,5 +103,33 @@ func TestDashboardViewContainsMotifAndStatus(t *testing.T) {
 	// One exited worktree → "1 needs you".
 	if !strings.Contains(v, "1 needs you") {
 		t.Errorf("View() should show '1 needs you'\n%s", v)
+	}
+	// The dashboard is wrapped in a rounded-border panel.
+	if !strings.Contains(v, "╭") || !strings.Contains(v, "╰") {
+		t.Errorf("View() should be wrapped in a rounded-border panel\n%s", v)
+	}
+}
+
+// TestDashboardSelectedRowIsHighlightBar locks the headline visual: the worktree
+// under the cursor renders as a full-width background highlight bar, and other
+// rows do not.
+func TestDashboardSelectedRowIsHighlightBar(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	m := NewDashboard(sampleViews(), nil)
+	w := sampleViews()[0].Worktrees[0]
+
+	selected := m.worktreeLine(w, true, 60)
+	if !strings.Contains(selected, "48;2;") {
+		t.Errorf("selected row should carry a background escape (highlight bar), got %q", selected)
+	}
+	if got := lipgloss.Width(selected); got != 60 {
+		t.Errorf("selected row width = %d, want 60 (fills the inner width)", got)
+	}
+
+	plain := m.worktreeLine(w, false, 60)
+	if strings.Contains(plain, "48;2;") {
+		t.Errorf("non-selected row should not carry a background escape, got %q", plain)
 	}
 }
