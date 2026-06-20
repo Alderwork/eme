@@ -17,7 +17,22 @@ type Config struct {
 	Agent    Agent       `toml:"agent"`
 	Picker   Picker      `toml:"picker"`
 	Worktree Worktree    `toml:"worktree"`
+	Tmux     Tmux        `toml:"tmux"`
 	Agents   []AgentSpec `toml:"agents"`
+}
+
+// Tmux configures how eme talks to tmux.
+type Tmux struct {
+	// Socket optionally pins every tmux operation to one server (tmux -L
+	// <socket>). The default is empty: eme is "native to your tmux" and operates
+	// on whatever server you are currently attached to (the popup's host, or the
+	// default socket when outside tmux), so switching to a worktree moves your
+	// real client and the popup closes. Set a socket name only if you want a
+	// single dedicated eme server shared across every launch context — note that
+	// switching from a popup hosted on a *different* server then attaches into the
+	// popup instead of moving your client (a tmux client cannot cross servers).
+	// The EME_TMUX_SOCKET env var overrides this value.
+	Socket string `toml:"socket"`
 }
 
 // Agent configures agent execution.
@@ -107,6 +122,7 @@ func Default() *Config {
 		Agent:    Agent{Command: "opencode"},
 		Picker:   Picker{MaxDepth: DefaultPickerMaxDepth},
 		Worktree: Worktree{DirTemplate: "{repo}.worktrees"},
+		// Tmux.Socket defaults to "" (ambient: use your current tmux server).
 	}
 }
 
@@ -137,6 +153,7 @@ func Load(path string) (*Config, error) {
 	if cfg.Worktree.DirTemplate == "" {
 		cfg.Worktree.DirTemplate = "{repo}.worktrees"
 	}
+	// cfg.Tmux.Socket is left as-is: "" means ambient (use the current server).
 	return cfg, nil
 }
 

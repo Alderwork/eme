@@ -13,13 +13,19 @@ import (
 // State reconciles cached state with live tmux and git state.
 // It returns true if the state was modified.
 func State(s *state.State) bool {
-	modified := false
-
 	liveSessions, err := tmux.ListSessions()
 	if err != nil {
-		liveSessions = map[string]string{}
+		// The tmux server is unreachable (not running yet, or eme is pinned to a
+		// socket whose server is down). Treating "can't see it" as "it's gone"
+		// would prune every session and the caller would persist that empty
+		// state, destroying records for sessions that are merely unreachable
+		// right now. Leave state untouched until we can compare against a live
+		// server. A running tmux server always reports at least one session, so
+		// an error here reliably means "no server", not "zero sessions".
+		return false
 	}
 
+	modified := false
 	keptSessions := s.Sessions[:0]
 	for _, sess := range s.Sessions {
 		if _, ok := liveSessions[sess.TmuxName]; !ok {

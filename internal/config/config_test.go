@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestCatalog_IncludesBuiltins(t *testing.T) {
 	c := Default() // Agent.Command == "opencode"
@@ -86,5 +90,38 @@ func TestWorktreeDirFor_RejectsParentEscape(t *testing.T) {
 func TestDefault_WorktreeTemplate(t *testing.T) {
 	if Default().Worktree.DirTemplate != "{repo}.worktrees" {
 		t.Errorf("default template = %q", Default().Worktree.DirTemplate)
+	}
+}
+
+func TestDefault_TmuxSocket_IsAmbient(t *testing.T) {
+	if got := Default().Tmux.Socket; got != "" {
+		t.Errorf("default tmux socket = %q, want \"\" (ambient)", got)
+	}
+}
+
+// TestLoad_PreservesConfiguredSocket checks that an explicit [tmux] socket is
+// honored, and that omitting it leaves ambient mode ("") rather than forcing a
+// pinned server.
+func TestLoad_PreservesConfiguredSocket(t *testing.T) {
+	dir := t.TempDir()
+
+	ambient := filepath.Join(dir, "ambient.toml")
+	if err := os.WriteFile(ambient, []byte("[agent]\ncommand = \"claude\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if cfg, err := Load(ambient); err != nil {
+		t.Fatalf("Load: %v", err)
+	} else if cfg.Tmux.Socket != "" {
+		t.Errorf("omitted socket = %q, want \"\" (ambient)", cfg.Tmux.Socket)
+	}
+
+	pinned := filepath.Join(dir, "pinned.toml")
+	if err := os.WriteFile(pinned, []byte("[tmux]\nsocket = \"eme\"\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if cfg, err := Load(pinned); err != nil {
+		t.Fatalf("Load: %v", err)
+	} else if cfg.Tmux.Socket != "eme" {
+		t.Errorf("configured socket = %q, want %q", cfg.Tmux.Socket, "eme")
 	}
 }

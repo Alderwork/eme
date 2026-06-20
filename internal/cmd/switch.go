@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
@@ -46,7 +45,7 @@ var switchCmd = &cobra.Command{
 			return err
 		}
 
-		if os.Getenv("TMUX") != "" {
+		if tmux.ClientOnManagedServer() {
 			if err := tmux.SwitchClient(sess.TmuxName, w.TmuxWindowID); err != nil {
 				return errors.Wrap(errors.CodeCommandFailed,
 					fmt.Sprintf("Could not switch to %s/%s.", sess.DisplayName, w.Name),

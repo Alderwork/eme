@@ -1,12 +1,45 @@
 package reconcile
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jinmu/eme/internal/git"
+	"github.com/jinmu/eme/internal/runner"
+	"github.com/jinmu/eme/internal/state"
+	"github.com/jinmu/eme/internal/tmux"
 )
+
+// TestState_UnreachableServerDoesNotPrune guards the data-loss fix: when the
+// tmux server can't be listed (e.g. not running, or pinned socket down), reconcile
+// must leave state untouched instead of pruning every session — otherwise the
+// caller persists an empty state and destroys records that are merely unreachable.
+func TestState_UnreachableServerDoesNotPrune(t *testing.T) {
+	mock := runner.NewMock()
+	mock.Set("tmux", []string{"list-sessions", "-F", "#{session_name}\t#{window_id}"},
+		"", "no server running", fmt.Errorf("exit status 1"))
+	old := tmux.Runner
+	tmux.Runner = mock
+	defer func() { tmux.Runner = old }()
+
+	s := &state.State{
+		Version: state.Version,
+		Sessions: []state.Session{{
+			ID:        "proj-abc",
+			TmuxName:  "proj",
+			Worktrees: []state.Worktree{{Name: "main", TmuxWindowID: "@1"}},
+		}},
+	}
+
+	if modified := State(s); modified {
+		t.Fatalf("State() = true; expected no modification when server unreachable")
+	}
+	if len(s.Sessions) != 1 {
+		t.Fatalf("session must be retained when server unreachable, got %d sessions", len(s.Sessions))
+	}
+}
 
 func TestPrunablePaths(t *testing.T) {
 	entries := []git.WorktreeEntry{

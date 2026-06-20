@@ -76,6 +76,7 @@ func runDoctor() error {
 		fn   func() (bool, string)
 	}{
 		{"tmux installed", checkTmuxInstalled},
+		{"tmux socket", checkTmuxSocket},
 		{"tmux server reachable", checkTmuxServer},
 		{"tmux popup support", checkTmuxPopup},
 		{"git installed", checkGitInstalled},
@@ -154,12 +155,24 @@ func checkTmuxInstalled() (bool, string) {
 	return true, v
 }
 
+// checkTmuxSocket reports which tmux server eme is pinned to. It is informational
+// (always ok) but directly diagnoses "my sessions differ between shell and popup"
+// by making the single managed server visible.
+func checkTmuxSocket() (bool, string) {
+	if tmux.Socket == "" {
+		return true, "ambient (follows $TMUX)"
+	}
+	return true, fmt.Sprintf("%s (%s)", tmux.Socket, tmux.ManagedSocketPath())
+}
+
 func checkTmuxServer() (bool, string) {
 	if tmux.ServerReachable() {
 		return true, "server reachable"
 	}
-	env := tmux.DetectEnv()
-	if env.SocketPath != "" {
+	if sock := tmux.ManagedSocketPath(); sock != "" {
+		return false, fmt.Sprintf("server not reachable on %s", sock)
+	}
+	if env := tmux.DetectEnv(); env.SocketPath != "" {
 		return false, fmt.Sprintf("server not reachable on %s", env.SocketPath)
 	}
 	return false, "server not running"

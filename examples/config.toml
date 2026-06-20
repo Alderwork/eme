@@ -15,3 +15,13 @@ command = "opencode"
 
 # You can override the agent per folder or per worktree from the dashboard.
 # Global default is used when no override is set.
+
+[tmux]
+# By default eme is native to your tmux: it uses whatever server you are
+# currently attached to, so switching to a worktree moves your real client and
+# the popup closes. Set socket to pin every eme operation to one dedicated
+# server (tmux -L <socket>) shared across all launch contexts — useful if you
+# want one eme server regardless of where you run it, at the cost of switching
+# from a popup on a different server attaching instead of moving your client.
+# The EME_TMUX_SOCKET environment variable overrides this value.
+# socket = "eme"

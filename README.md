@@ -30,6 +30,13 @@ Reload tmux:
 tmux source-file ~/.tmux.conf
 ```
 
+`eme` is native to your tmux: it operates on whatever tmux server you are
+currently attached to, so picking a worktree moves your real client and the
+popup closes. If you instead want one dedicated eme server shared across every
+launch context (including plain shells outside tmux), pin it with
+`[tmux] socket = "<name>"` in `~/.config/eme/config.toml` or
+`EME_TMUX_SOCKET=<name>`. Run `eme doctor` to see which server is in use.
+
 ## Quick start
 
 1. Press `<prefix> a` to open the dashboard.

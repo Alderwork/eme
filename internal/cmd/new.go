@@ -82,7 +82,7 @@ func maybeSwitchClient(session, windowID string) {
 	if noSwitchFlag {
 		return
 	}
-	if tmux.DetectEnv().InsideTmux {
+	if tmux.ClientOnManagedServer() {
 		_ = tmux.SwitchClient(session, windowID)
 	}
 }
@@ -667,7 +667,7 @@ func switchToSession(sess *state.Session) error {
 			"The main worktree is missing or corrupted.",
 			"Recreate the project with `eme new`.")
 	}
-	if tmux.DetectEnv().InsideTmux {
+	if tmux.ClientOnManagedServer() {
 		if err := tmux.SwitchClient(sess.TmuxName, w.TmuxWindowID); err != nil {
 			return errors.Wrap(errors.CodeCommandFailed,
 				fmt.Sprintf("Could not switch to %s/main.", sess.DisplayName),

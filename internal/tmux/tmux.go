@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -14,6 +15,63 @@ import (
 
 // Runner is the command runner used by this package. Tests can replace it.
 var Runner runner.Runner = runner.Default
+
+// Socket pins every tmux invocation to one server via `tmux -L <Socket>`, so eme
+// talks to the same tmux server whether it was launched from a plain shell or
+// from a tmux popup hosted on some other server. The empty zero value (used by
+// unit tests) means "no -L flag": tmux falls back to its ambient resolution
+// ($TMUX when inside tmux, else the default socket). Production sets this from
+// config in cmd's PersistentPreRunE (default "default").
+var Socket string
+
+// withSocket prepends `-L <Socket>` to args when a socket is pinned.
+func withSocket(args []string) []string {
+	if Socket == "" {
+		return args
+	}
+	return append([]string{"-L", Socket}, args...)
+}
+
+// ManagedSocketPath returns the filesystem path of the tmux server eme is pinned
+// to, derived the same way tmux resolves a `-L <name>` socket:
+// ${TMUX_TMPDIR:-/tmp}/tmux-<uid>/<name>. It returns "" when no socket is pinned.
+func ManagedSocketPath() string {
+	if Socket == "" {
+		return ""
+	}
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	return filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), Socket)
+}
+
+// ClientOnManagedServer reports whether the tmux client that launched eme is
+// attached to the same server eme manages. Only then does `switch-client` move
+// the user's view; otherwise callers must `attach-session` instead. With no
+// pinned socket it falls back to "inside tmux", preserving legacy behavior.
+func ClientOnManagedServer() bool {
+	env := DetectEnv()
+	if !env.InsideTmux {
+		return false
+	}
+	if Socket == "" {
+		return true
+	}
+	return resolveSocketPath(env.SocketPath) == resolveSocketPath(ManagedSocketPath())
+}
+
+// resolveSocketPath canonicalizes a socket path so comparisons survive symlinked
+// temp dirs (notably macOS /tmp -> /private/tmp). It falls back to the raw path.
+func resolveSocketPath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
+}
 
 // Env holds tmux environment details.
 type Env struct {
@@ -120,20 +178,38 @@ func SwitchClient(session, windowID string) error {
 	return nil
 }
 
-// AttachSession attaches to a session (and optionally a window) from outside tmux.
+// AttachSession attaches to a session (and optionally a window). Used when the
+// caller's client is not on eme's server: from outside tmux, or — with a pinned
+// socket — from a popup hosted on a different server. It drops $TMUX so tmux does
+// not reject the attach with "sessions should be nested with care"; nesting onto
+// a different socket is safe and is the only way to reach a pinned server from a
+// popup. With no pin this is a no-op because $TMUX is already unset.
 func AttachSession(session, windowID string) error {
 	target := session
 	if windowID != "" {
 		target = session + ":" + windowID
 	}
-	cmd := exec.Command("tmux", "attach-session", "-t", target)
+	cmd := exec.Command("tmux", withSocket([]string{"attach-session", "-t", target})...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cmd.Env = envWithoutTMUX(os.Environ())
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tmux attach-session: %w", err)
 	}
 	return nil
+}
+
+// envWithoutTMUX returns env with any TMUX entry removed.
+func envWithoutTMUX(env []string) []string {
+	out := env[:0:0]
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "TMUX=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // SendKeys sends literal keys followed by Enter to a target window or pane.
@@ -226,7 +302,8 @@ func PopupSize() (width, height int, err error) {
 	return w, h, nil
 }
 
-// tmux runs a tmux command and returns stdout/stderr.
+// tmux runs a tmux command and returns stdout/stderr. When Socket is set, the
+// invocation is pinned to that server with `-L <Socket>`.
 func tmux(args ...string) (string, string, error) {
-	return Runner.Run(context.Background(), "tmux", args...)
+	return Runner.Run(context.Background(), "tmux", withSocket(args)...)
 }

@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Reconcile no longer prunes (and persists) sessions when the tmux server is
+  unreachable. Opening the dashboard while the server was down used to treat
+  every session as dead and wipe it from state. This was the root cause of
+  sessions "disappearing" between launches.
+
+### Added
+
+- Optional `[tmux] socket` config (or `EME_TMUX_SOCKET`) pins all tmux
+  operations to one dedicated server via `tmux -L <socket>`, for users who want
+  a single eme server shared across every launch context. Default is unset
+  (ambient): eme stays native to whatever tmux server you are currently on, so
+  switching to a worktree moves your real client and the popup closes.
+- `eme doctor` reports which tmux server eme is using (ambient or a pinned
+  socket).
+
 ## [0.1.0] - 2026-06-19
 
 ### Added

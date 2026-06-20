@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -41,6 +42,11 @@ Run inside a tmux popup for the best experience.`,
 		if err != nil {
 			return err
 		}
+		// Default ("") is ambient: every tmux call targets the current client's
+		// server, so creating and switching to a worktree happen on the same
+		// server and switch-client moves your real client. Setting a socket
+		// (config or EME_TMUX_SOCKET) instead pins eme to one dedicated server.
+		tmux.Socket = resolveTmuxSocket(cfg)
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -67,6 +73,19 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(forgetCmd)
 	rootCmd.AddCommand(versionCmd)
+}
+
+// resolveTmuxSocket picks the tmux socket eme pins to: EME_TMUX_SOCKET if set,
+// otherwise the configured socket. An empty result means ambient mode — eme uses
+// whatever tmux server the current client is on, so switching is native.
+func resolveTmuxSocket(cfg *config.Config) string {
+	if v := os.Getenv("EME_TMUX_SOCKET"); v != "" {
+		return v
+	}
+	if cfg != nil {
+		return cfg.Tmux.Socket
+	}
+	return ""
 }
 
 func loadState() (*state.State, error) {
