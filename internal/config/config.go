@@ -14,14 +14,75 @@ const DefaultPickerMaxDepth = 3
 
 // Config holds user configuration for eme.
 type Config struct {
-	Agent    Agent    `toml:"agent"`
-	Picker   Picker   `toml:"picker"`
-	Worktree Worktree `toml:"worktree"`
+	Agent    Agent       `toml:"agent"`
+	Picker   Picker      `toml:"picker"`
+	Worktree Worktree    `toml:"worktree"`
+	Agents   []AgentSpec `toml:"agents"`
 }
 
 // Agent configures agent execution.
 type Agent struct {
 	Command string `toml:"command"`
+}
+
+// AgentSpec is one launchable agent in the catalog. Command is the shell line
+// eme types into the worktree pane; it runs with the worktree as its cwd.
+type AgentSpec struct {
+	Name    string `toml:"name"`
+	Command string `toml:"command"`
+}
+
+// BuiltinAgents is the catalog eme ships out of the box.
+func BuiltinAgents() []AgentSpec {
+	return []AgentSpec{
+		{Name: "claude", Command: "claude"},
+		{Name: "codex", Command: "codex"},
+		{Name: "gemini", Command: "gemini"},
+		{Name: "opencode", Command: "opencode"},
+	}
+}
+
+// Catalog returns the merged agent catalog: builtins first, with user [[agents]]
+// overriding a builtin's command when names match and appending otherwise. A
+// custom legacy agent.command that is not already represented is surfaced as a
+// trailing entry so existing setups still appear and can be the default.
+func (c *Config) Catalog() []AgentSpec {
+	out := append([]AgentSpec(nil), BuiltinAgents()...)
+	for _, u := range c.Agents {
+		if u.Name == "" || u.Command == "" {
+			continue
+		}
+		idx := -1
+		for i := range out {
+			if out[i].Name == u.Name {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			out[idx].Command = u.Command
+		} else {
+			out = append(out, u)
+		}
+	}
+	if c.Agent.Command != "" {
+		found := false
+		for _, a := range out {
+			if a.Command == c.Agent.Command || a.Name == c.Agent.Command {
+				found = true
+				break
+			}
+		}
+		if !found {
+			fields := strings.Fields(c.Agent.Command)
+			name := c.Agent.Command
+			if len(fields) > 0 {
+				name = filepath.Base(fields[0])
+			}
+			out = append(out, AgentSpec{Name: name, Command: c.Agent.Command})
+		}
+	}
+	return out
 }
 
 // Picker configures the folder picker scan.
