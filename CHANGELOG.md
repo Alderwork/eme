@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - The `eme` dashboard is now a persistent control center: create (`n`), create-worktree (`c`), agent (`a`), and kill (`d`) run in place and return to the refreshed dashboard instead of exiting. Only Enter/`o` switches away to a session. Killing now asks for confirmation.
+- The `eme` dashboard is restyled (claude-squad-inspired): a two-level session → worktree tree with per-worktree agent status (`working`/`exited`/`idle`), numbered sessions, a `N needs you` counter, and a styled keybinding footer. Navigation is per-worktree; `d` kills the selected worktree (or the whole project on a `main` row) after confirmation; `↵` opens it.
 
 ### Fixed
 

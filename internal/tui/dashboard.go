@@ -5,66 +5,122 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-
-	"github.com/jinmu/eme/internal/state"
 )
 
+// titleStyle, cursorStyle, mutedStyle, errorStyle, helpStyle are SHARED with
+// picker.go / input.go (same package) and MUST remain defined here — do not drop
+// them when rewriting this file.
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7D56F4"))
 	cursorStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#04B575"))
 	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	windowStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#CCCCCC"))
 	errorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555"))
 	helpStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+
+	rhymeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7D56F4"))
+	needsYouStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#E5C07B"))
+	sessionStyle  = lipgloss.NewStyle().Bold(true)
+	rootStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	branchStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
+	addStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#04B575"))
+	delStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF5555"))
 )
+
+// rowRef points at a worktree within the view-model.
+type rowRef struct{ session, worktree int }
+
+// killTarget describes a pending kill confirmation.
+type killTarget struct {
+	sessionID    string
+	worktreeName string
+	label        string
+	isMain       bool
+}
 
 // DashboardModel is the main dashboard.
 type DashboardModel struct {
-	sessions []state.Session
-	cursor   int
+	views    []SessionView
+	rows     []rowRef // flattened selectable worktree rows, in render order
+	cursor   int      // index into rows
 	width    int
 	height   int
 	notice   string
-	// pendingKill is the session ID awaiting a kill confirmation, or "" when no
-	// confirmation is in progress.
-	pendingKill string
-	showHelp    bool
-	// reload re-reads the (reconciled) session list after a child action
-	// returns. It may be nil (e.g. in tests), in which case the list is not
-	// refreshed.
-	reload func() ([]state.Session, error)
+	pending  *killTarget
+	showHelp bool
+	// reload re-reads the view-model after a child action returns. May be nil
+	// (tests), in which case the list is not refreshed.
+	reload func() ([]SessionView, error)
 }
 
 // NewDashboard creates a dashboard model. reload is called after each child
-// action (create/kill/agent) completes to refresh the session list.
-func NewDashboard(sessions []state.Session, reload func() ([]state.Session, error)) *DashboardModel {
-	return &DashboardModel{sessions: sessions, reload: reload}
+// action (create/kill/agent) completes to refresh the view-model.
+func NewDashboard(views []SessionView, reload func() ([]SessionView, error)) *DashboardModel {
+	m := &DashboardModel{views: views, reload: reload}
+	m.rebuildRows()
+	return m
 }
 
-// actionFinishedMsg is delivered after a child `eme` process — launched for a
-// create/kill/agent action — exits and the dashboard regains the terminal.
+// rebuildRows recomputes the flattened selectable list and clamps the cursor.
+func (m *DashboardModel) rebuildRows() {
+	m.rows = nil
+	for si := range m.views {
+		for wi := range m.views[si].Worktrees {
+			m.rows = append(m.rows, rowRef{session: si, worktree: wi})
+		}
+	}
+	if m.cursor >= len(m.rows) {
+		m.cursor = len(m.rows) - 1
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+}
+
+// selected returns the worktree under the cursor, or nil if the list is empty.
+func (m *DashboardModel) selected() *WorktreeView {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return nil
+	}
+	r := m.rows[m.cursor]
+	return &m.views[r.session].Worktrees[r.worktree]
+}
+
+// needsYouCount counts worktrees whose status warrants attention.
+func (m *DashboardModel) needsYouCount() int {
+	n := 0
+	for si := range m.views {
+		for _, w := range m.views[si].Worktrees {
+			if w.Status.NeedsAttention() {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// actionFinishedMsg is delivered after a child `eme` process exits.
 type actionFinishedMsg struct{ err error }
 
 // Init implements tea.Model.
-func (m *DashboardModel) Init() tea.Cmd {
-	return nil
-}
+func (m *DashboardModel) Init() tea.Cmd { return nil }
 
 // Update implements tea.Model.
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// A pending kill confirmation takes over key handling: y confirms, any
-		// other key cancels.
-		if m.pendingKill != "" {
-			id := m.pendingKill
-			m.pendingKill = ""
+		if m.pending != nil {
+			t := m.pending
+			m.pending = nil
 			if msg.String() == "y" {
-				return m, m.runChild("kill", id, "--force")
+				if t.isMain {
+					return m, m.runChild("kill", t.sessionID, "--force")
+				}
+				return m, m.runChild("kill", t.sessionID, t.worktreeName, "--force")
 			}
 			return m, nil
 		}
@@ -78,32 +134,33 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.cursor < len(m.sessions)-1 {
+			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
 		case "enter", "o":
-			if m.cursor < len(m.sessions) {
-				// Switching is the one action that leaves the dashboard for the
-				// selected session.
-				return m, m.switchTo(m.sessions[m.cursor].ID)
+			if w := m.selected(); w != nil {
+				return m, m.switchTo(w.SessionID, w.Name)
 			}
 		case "n":
-			// Create a project, then return to the dashboard (no auto-switch).
 			return m, m.runChild("new", "--no-switch")
 		case "c":
-			if m.cursor < len(m.sessions) {
-				return m, m.runChild("new", "--worktree", m.sessions[m.cursor].ID, "--no-switch")
-			}
-		case "d":
-			if m.cursor < len(m.sessions) {
-				// Kill removes worktrees and the tmux session, so confirm before
-				// launching the child (which runs `eme kill <id> --force`).
-				m.pendingKill = m.sessions[m.cursor].ID
-				m.notice = ""
+			if w := m.selected(); w != nil {
+				return m, m.runChild("new", "--worktree", w.SessionID, "--no-switch")
 			}
 		case "a":
-			if m.cursor < len(m.sessions) {
-				return m, m.runChild("agent", m.sessions[m.cursor].ID)
+			if w := m.selected(); w != nil {
+				return m, m.runChild("agent", w.SessionID, w.Name)
+			}
+		case "d":
+			if w := m.selected(); w != nil {
+				t := &killTarget{sessionID: w.SessionID, worktreeName: w.Name, isMain: w.IsMain}
+				if w.IsMain {
+					t.label = "project " + m.views[m.rows[m.cursor].session].DisplayName
+				} else {
+					t.label = "worktree " + w.Name
+				}
+				m.pending = t
+				m.notice = ""
 			}
 		}
 	case tea.WindowSizeMsg:
@@ -117,55 +174,73 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (m *DashboardModel) View() string {
-	var b string
-	b += titleStyle.Render("eme dashboard") + "\n\n"
-	if len(m.sessions) == 0 {
-		b += mutedStyle.Render("No sessions. Press 'n' to create one.\n")
+	var b strings.Builder
+
+	left := titleStyle.Render("╶╶ eme ╶╶") + "  " + rhymeStyle.Render("eeny · meeny · miny · moe")
+	right := ""
+	if n := m.needsYouCount(); n > 0 {
+		right = needsYouStyle.Render(fmt.Sprintf("%d needs you", n))
+	}
+	b.WriteString(m.headerLine(left, right))
+	b.WriteString("\n\n")
+
+	if len(m.rows) == 0 {
+		b.WriteString(mutedStyle.Render("No sessions. Press 'n' to create one.") + "\n")
 	} else {
-		for i, sess := range m.sessions {
-			prefix := "  "
-			if i == m.cursor {
-				prefix = cursorStyle.Render("> ")
-			}
-			b += fmt.Sprintf("%s%s  %s\n", prefix, sess.DisplayName, mutedStyle.Render(sess.Root))
-			for _, w := range sess.Worktrees {
-				status := ""
-				if w.AgentPID > 0 {
-					status = mutedStyle.Render(" [agent]")
+		rowi := 0
+		for si := range m.views {
+			sv := m.views[si]
+			b.WriteString(fmt.Sprintf(" %d  %s  %s\n", si+1, sessionStyle.Render(sv.DisplayName), rootStyle.Render(sv.Root)))
+			for wi := range sv.Worktrees {
+				w := sv.Worktrees[wi]
+				marker := "  "
+				nameCell := fmt.Sprintf("%-14s", w.Name)
+				if rowi == m.cursor {
+					marker = cursorStyle.Render("▸ ")
+					nameCell = cursorStyle.Render(nameCell)
 				}
-				b += fmt.Sprintf("    %s%s  %s%s\n", windowStyle.Render("-"), w.Name, mutedStyle.Render(w.Branch), status)
+				status := statusStyle[w.Status].Render(w.Status.Glyph() + " " + w.Status.Label())
+				trailer := w.AgentLabel
+				if trailer == "" && w.HasDiff {
+					trailer = addStyle.Render(fmt.Sprintf("+%d", w.Added)) + " " + delStyle.Render(fmt.Sprintf("-%d", w.Deleted))
+				}
+				b.WriteString(fmt.Sprintf("  %s%s %s  %s  %s\n",
+					marker, nameCell, branchStyle.Render(fmt.Sprintf("%-16s", w.Branch)), status, trailer))
+				rowi++
 			}
+			b.WriteString("\n")
 		}
 	}
-	b += "\n"
-	switch {
-	case m.pendingKill != "":
-		b += errorStyle.Render(fmt.Sprintf("kill %s?  y = confirm, any other key = cancel", m.killTargetName())) + "\n"
-	case m.notice != "":
-		b += errorStyle.Render(m.notice) + "\n"
+
+	if m.pending != nil {
+		b.WriteString(errorStyle.Render("kill "+m.pending.label+"?  y = confirm, any other key = cancel") + "\n")
+	} else if m.notice != "" {
+		b.WriteString(errorStyle.Render(m.notice) + "\n")
 	}
+
 	if m.showHelp {
-		b += helpStyle.Render("n: new  c: create worktree  enter/o: open  d: kill  a: agent  q: quit  ?: help") + "\n"
+		b.WriteString(helpStyle.Render("n new · c worktree · a agent · ↵/o open · d kill · q quit · ?") + "\n")
 	} else {
-		b += helpStyle.Render("?: help") + "\n"
+		b.WriteString(helpStyle.Render("?: help") + "\n")
 	}
-	return b
+	return b.String()
 }
 
-// killTargetName returns the display name of the session awaiting kill
-// confirmation, falling back to its ID if it is no longer in the list.
-func (m *DashboardModel) killTargetName() string {
-	for _, s := range m.sessions {
-		if s.ID == m.pendingKill {
-			return s.DisplayName
-		}
+// headerLine right-aligns right against the known width, falling back to a small
+// gap when width is unknown.
+func (m *DashboardModel) headerLine(left, right string) string {
+	if right == "" {
+		return left
 	}
-	return m.pendingKill
+	gap := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		gap = 2
+	}
+	return left + strings.Repeat(" ", gap) + right
 }
 
-// refresh re-reads the session list after a child action returns, recording any
-// error as a transient notice. It never quits the dashboard, so a cancelled or
-// failed action simply leaves the user back on the dashboard.
+// refresh re-reads the view-model after a child action, recording any error as a
+// transient notice. It never quits the dashboard.
 func (m *DashboardModel) refresh(actionErr error) {
 	if actionErr != nil {
 		m.notice = actionErr.Error()
@@ -175,46 +250,36 @@ func (m *DashboardModel) refresh(actionErr error) {
 	if m.reload == nil {
 		return
 	}
-	sessions, err := m.reload()
+	views, err := m.reload()
 	if err != nil {
 		m.notice = "refresh failed: " + err.Error()
 		return
 	}
-	m.sessions = sessions
-	if m.cursor >= len(m.sessions) {
-		m.cursor = len(m.sessions) - 1
-	}
-	if m.cursor < 0 {
-		m.cursor = 0
-	}
+	m.views = views
+	m.rebuildRows()
 }
 
 // runChild runs `eme <args...>` as a child process, pausing the dashboard and
-// handing it the terminal so its own picker/prompt renders, then resumes the
-// dashboard and refreshes the session list. Used for create/kill/agent so the
-// dashboard persists across them.
+// handing it the terminal, then resumes and refreshes.
 func (m *DashboardModel) runChild(args ...string) tea.Cmd {
 	binary, err := os.Executable()
 	if err != nil {
-		return func() tea.Msg {
-			return actionFinishedMsg{err: fmt.Errorf("locate eme binary: %w", err)}
-		}
+		return func() tea.Msg { return actionFinishedMsg{err: fmt.Errorf("locate eme binary: %w", err)} }
 	}
 	return tea.ExecProcess(exec.Command(binary, args...), func(err error) tea.Msg {
 		return actionFinishedMsg{err: err}
 	})
 }
 
-// switchTo replaces this process with `eme switch <id>`, leaving the dashboard
-// for the target session. On success it never returns; the returned message is
-// only delivered if exec itself fails.
-func (m *DashboardModel) switchTo(id string) tea.Cmd {
+// switchTo replaces this process with `eme switch <session> <worktree>`, leaving
+// the dashboard. On success it never returns.
+func (m *DashboardModel) switchTo(sessionID, worktree string) tea.Cmd {
 	return func() tea.Msg {
 		binary, err := os.Executable()
 		if err != nil {
 			return actionFinishedMsg{err: fmt.Errorf("locate eme binary: %w", err)}
 		}
-		err = syscall.Exec(binary, []string{"eme", "switch", id}, os.Environ())
+		err = syscall.Exec(binary, []string{"eme", "switch", sessionID, worktree}, os.Environ())
 		return actionFinishedMsg{err: fmt.Errorf("exec eme switch: %w", err)}
 	}
 }

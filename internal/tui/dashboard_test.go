@@ -2,118 +2,104 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-
-	"github.com/jinmu/eme/internal/state"
 )
 
-func runeKey(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
-}
+func runeKey(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
-func TestDashboardRefresh_ReloadsAndClearsNoticeAndClampsCursor(t *testing.T) {
-	// Cursor sits on the last of three sessions; a child action then removes two
-	// of them. refresh must adopt the new list, clamp the now out-of-range
-	// cursor, and clear a stale notice from a previous failed action.
-	m := NewDashboard(
-		[]state.Session{{ID: "a"}, {ID: "b"}, {ID: "c"}},
-		func() ([]state.Session, error) { return []state.Session{{ID: "a"}}, nil },
-	)
-	m.cursor = 2
-	m.notice = "previous error" // must be cleared on a successful action
-
-	m.refresh(nil)
-
-	if len(m.sessions) != 1 {
-		t.Fatalf("sessions = %d, want 1", len(m.sessions))
-	}
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (clamped)", m.cursor)
-	}
-	if m.notice != "" {
-		t.Errorf("notice = %q, want empty (stale notice cleared on success)", m.notice)
+func sampleViews() []SessionView {
+	return []SessionView{
+		{DisplayName: "myapp", Root: "/code/myapp", Worktrees: []WorktreeView{
+			{Name: "main", Branch: "main", SessionID: "myapp", IsMain: true, Status: StatusWorking, AgentLabel: "claude"},
+			{Name: "feat", Branch: "feat/x", SessionID: "myapp", Status: StatusExited},
+		}},
+		{DisplayName: "api", Root: "/code/api", Worktrees: []WorktreeView{
+			{Name: "main", Branch: "main", SessionID: "api", IsMain: true, Status: StatusIdle},
+		}},
 	}
 }
 
-func TestDashboardRefresh_EmptyReloadClampsToZero(t *testing.T) {
-	m := NewDashboard(
-		[]state.Session{{ID: "a"}},
-		func() ([]state.Session, error) { return nil, nil },
-	)
-	m.cursor = 0
-
-	m.refresh(nil)
-
-	if len(m.sessions) != 0 {
-		t.Fatalf("sessions = %d, want 0", len(m.sessions))
+func TestDashboardFlattenAndCursorClamp(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	if len(m.rows) != 3 {
+		t.Fatalf("rows = %d, want 3 (flattened worktrees)", len(m.rows))
 	}
-	if m.cursor != 0 {
-		t.Errorf("cursor = %d, want 0 (not -1)", m.cursor)
+	for i := 0; i < 10; i++ {
+		m.Update(runeKey('j'))
+	}
+	if m.cursor != 2 {
+		t.Errorf("cursor = %d, want clamped at 2", m.cursor)
 	}
 }
 
-func TestDashboardRefresh_ActionErrorIsTransient(t *testing.T) {
-	reloadCalled := false
-	m := NewDashboard(
-		[]state.Session{{ID: "a"}},
-		func() ([]state.Session, error) { reloadCalled = true; return []state.Session{{ID: "a"}}, nil },
-	)
-
-	m.refresh(errors.New("kill failed"))
-
-	if !reloadCalled {
-		t.Errorf("reload should still run after an action error")
+func TestDashboardKillContext_MainKillsSession(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 0 // myapp/main (IsMain)
+	m.Update(runeKey('d'))
+	if m.pending == nil || !m.pending.isMain || m.pending.sessionID != "myapp" {
+		t.Fatalf("pending = %+v, want isMain session kill of myapp", m.pending)
 	}
-	if m.notice != "kill failed" {
-		t.Errorf("notice = %q, want the action error message", m.notice)
-	}
-	// The list survives (dashboard keeps running); the error is only a notice.
-	if len(m.sessions) != 1 {
-		t.Errorf("sessions = %d, want 1 (action error must not drop the list)", len(m.sessions))
-	}
-}
-
-func TestDashboardRefresh_NilReloadIsSafe(t *testing.T) {
-	m := NewDashboard([]state.Session{{ID: "a"}}, nil)
-
-	m.refresh(nil) // must not panic with a nil reload
-
-	if len(m.sessions) != 1 {
-		t.Errorf("sessions unexpectedly changed with nil reload")
-	}
-}
-
-func TestDashboardKillConfirmFlow(t *testing.T) {
-	m := NewDashboard([]state.Session{{ID: "a", DisplayName: "app"}}, nil)
-
-	// 'd' arms the confirmation without launching anything.
-	m2, cmd := m.Update(runeKey('d'))
-	dm := m2.(*DashboardModel)
-	if dm.pendingKill != "a" {
-		t.Fatalf("pendingKill = %q, want \"a\" after 'd'", dm.pendingKill)
-	}
-	if cmd != nil {
-		t.Errorf("arming kill must not launch a command")
-	}
-
-	// A non-'y' key cancels without launching anything.
-	_, cmd = dm.Update(runeKey('n'))
-	if dm.pendingKill != "" {
-		t.Errorf("pendingKill = %q, want cleared after cancel", dm.pendingKill)
-	}
-	if cmd != nil {
-		t.Errorf("cancelling kill must not launch a command")
-	}
-
-	// Re-arm and confirm with 'y' → a command (the kill child) is returned.
-	dm.Update(runeKey('d'))
-	_, cmd = dm.Update(runeKey('y'))
-	if dm.pendingKill != "" {
-		t.Errorf("pendingKill should be cleared after confirm")
-	}
+	_, cmd := m.Update(runeKey('y'))
 	if cmd == nil {
-		t.Errorf("confirming kill should launch the kill child command")
+		t.Error("confirming kill should return a command")
+	}
+	if m.pending != nil {
+		t.Error("pending should clear after confirm")
+	}
+}
+
+func TestDashboardKillContext_WorktreeKill(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/feat (not main)
+	m.Update(runeKey('d'))
+	if m.pending == nil || m.pending.isMain || m.pending.worktreeName != "feat" {
+		t.Fatalf("pending = %+v, want worktree kill of feat", m.pending)
+	}
+	_, cmd := m.Update(runeKey('n')) // cancel
+	if cmd != nil || m.pending != nil {
+		t.Error("cancel should clear pending and return no command")
+	}
+}
+
+func TestDashboardRefreshRebuildsRows(t *testing.T) {
+	m := NewDashboard(sampleViews(), func() ([]SessionView, error) {
+		return []SessionView{{DisplayName: "api", Root: "/code/api", Worktrees: []WorktreeView{
+			{Name: "main", SessionID: "api", IsMain: true, Status: StatusIdle},
+		}}}, nil
+	})
+	m.cursor = 2
+	m.refresh(nil)
+	if len(m.rows) != 1 {
+		t.Fatalf("rows = %d, want 1 after refresh", len(m.rows))
+	}
+	if m.cursor != 0 {
+		t.Errorf("cursor = %d, want clamped to 0", m.cursor)
+	}
+}
+
+func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
+	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
+	m.refresh(errors.New("kill failed"))
+	if m.notice != "kill failed" {
+		t.Errorf("notice = %q, want the action error", m.notice)
+	}
+	if len(m.rows) != 3 {
+		t.Errorf("rows = %d, want list preserved", len(m.rows))
+	}
+}
+
+func TestDashboardViewContainsMotifAndStatus(t *testing.T) {
+	v := NewDashboard(sampleViews(), nil).View()
+	for _, want := range []string{"eme", "needs you", "myapp", "working", "exited", "idle", "◐", "○"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("View() missing %q\n---\n%s", want, v)
+		}
+	}
+	// One exited worktree → "1 needs you".
+	if !strings.Contains(v, "1 needs you") {
+		t.Errorf("View() should show '1 needs you'\n%s", v)
 	}
 }

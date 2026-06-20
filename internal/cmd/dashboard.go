@@ -21,12 +21,12 @@ func runDashboard() error {
 		return printSessionList(s)
 	}
 
-	model := tui.NewDashboard(s.Sessions, func() ([]state.Session, error) {
+	model := tui.NewDashboard(buildSessionViews(s.Sessions), func() ([]tui.SessionView, error) {
 		rs, err := loadReconciledState()
 		if err != nil {
 			return nil, err
 		}
-		return rs.Sessions, nil
+		return buildSessionViews(rs.Sessions), nil
 	})
 	if _, err := tea.NewProgram(model).Run(); err != nil {
 		return fmt.Errorf("dashboard: %w", err)
