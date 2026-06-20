@@ -87,6 +87,21 @@ func defaultAgentName(catalog []config.AgentSpec, command string) string {
 	return ""
 }
 
+// pickWorktreeAgent runs the agent picker for w and records the choice as the
+// worktree's override. It refuses while an agent is already running, because the
+// picked command would otherwise be typed into the running agent's pane.
+func pickWorktreeAgent(s *state.State, sess *state.Session, w *state.Worktree) error {
+	if w.AgentPID > 0 && processExists(w.AgentPID) {
+		return errors.New(errors.CodeCommandFailed,
+			"An agent is already running in this worktree.",
+			"Choosing a new agent would type into the running one.",
+			"Stop it first (press a), then choose a new one.")
+	}
+	return chooseAndLaunchAgent(s, sess, w, resolvedAgentCommand(sess, w), func(command string) {
+		w.AgentCommandOverride = command
+	})
+}
+
 // chooseAndLaunchAgent shows the agent picker (pre-highlighting defaultCmd) and,
 // on a concrete selection, calls apply(command), persists state, and launches it
 // in w. "none", cancel, or an empty catalog leave everything untouched.
@@ -186,15 +201,7 @@ var agentCmd = &cobra.Command{
 		}
 
 		if agentPick {
-			if w.AgentPID > 0 && processExists(w.AgentPID) {
-				return errors.New(errors.CodeCommandFailed,
-					"An agent is already running in this worktree.",
-					"Choosing a new agent would type into the running one.",
-					"Stop it first (press a), then choose a new one.")
-			}
-			return chooseAndLaunchAgent(s, sess, w, resolvedAgentCommand(sess, w), func(command string) {
-				w.AgentCommandOverride = command
-			})
+			return pickWorktreeAgent(s, sess, w)
 		}
 
 		return toggleAgent(s, sess, w)

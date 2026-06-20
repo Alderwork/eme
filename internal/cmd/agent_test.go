@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jinmu/eme/internal/config"
+	"github.com/jinmu/eme/internal/errors"
 	"github.com/jinmu/eme/internal/runner"
 	"github.com/jinmu/eme/internal/state"
 	"github.com/jinmu/eme/internal/tui"
@@ -196,5 +198,25 @@ func TestLaunchAgentCommand_SendsBareCommand(t *testing.T) {
 	// Regression: the pane cwd is already the worktree, so NO path argument.
 	if gotLine != "claude" {
 		t.Errorf("sent line = %q, want bare %q (no path arg)", gotLine, "claude")
+	}
+}
+
+func TestPickWorktreeAgent_RefusesWhenAgentRunning(t *testing.T) {
+	prevPick := pickAgent
+	pickAgent = func(items []tui.AgentItem, def string) (tui.AgentItem, bool, bool, error) {
+		t.Fatal("picker must not run while an agent is already running")
+		return tui.AgentItem{}, false, true, nil
+	}
+	t.Cleanup(func() { pickAgent = prevPick })
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "x"}
+	// os.Getpid() is this test process — guaranteed alive, so processExists is true.
+	w := &state.Worktree{Name: "main", TmuxWindowID: "@1", AgentPID: os.Getpid()}
+
+	err := pickWorktreeAgent(s, sess, w)
+	e := errors.As(err)
+	if e == nil || e.Code != errors.CodeCommandFailed {
+		t.Fatalf("pickWorktreeAgent with running agent = %v, want code %s", err, errors.CodeCommandFailed)
 	}
 }
