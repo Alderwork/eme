@@ -450,8 +450,27 @@ func registerNestedBareProject(root string) error {
 		return err
 	}
 	fmt.Printf("Created project %q at %s\n", displayName, root)
+	if stored := s.SessionByID(sessID); stored != nil {
+		maybeOnboardAgent(s, stored)
+	}
 	maybeSwitchClient(tmuxName, windowID)
 	return nil
+}
+
+// maybeOnboardAgent offers the agent picker for a freshly created project and,
+// on a concrete choice, records it as the project default and launches it in
+// main. It is best-effort: the project already exists, so any failure here is
+// reported to stderr and never fails project creation.
+func maybeOnboardAgent(s *state.State, sess *state.Session) {
+	w := sess.WorktreeByName("main")
+	if w == nil {
+		return
+	}
+	if err := chooseAndLaunchAgent(s, sess, w, sess.AgentCommand, func(command string) {
+		sess.AgentCommand = command
+	}); err != nil {
+		fmt.Fprintln(os.Stderr, "eme: agent setup:", err)
+	}
 }
 
 func createWorktreePrompt(sessionArg, name string) error {
