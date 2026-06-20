@@ -2,12 +2,50 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/jinmu/eme/internal/runner"
 )
+
+// TestClassify_RealGit_BareGreenfieldNormal exercises Classify against REAL git
+// for the three "not inside a work tree" outcomes. A standalone bare repo is the
+// regression case: real `git rev-parse --is-inside-work-tree` returns "false"
+// with exit 0 (no error), so a mock-only suite never caught the misclassification.
+func TestClassify_RealGit_BareGreenfieldNormal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses real git")
+	}
+	Runner = runner.Default // be explicit; other tests swap and restore Runner
+
+	base := t.TempDir()
+
+	bare := filepath.Join(base, "barerepo.git")
+	if _, _, err := runner.Default.Run(context.Background(), "git", "init", "--bare", bare); err != nil {
+		t.Fatalf("git init --bare: %v", err)
+	}
+	if c, err := Classify(bare); err != nil || c.Kind != KindBareRepo {
+		t.Errorf("bare repo: Kind = %v, err = %v, want KindBareRepo", c.Kind, err)
+	}
+
+	green := filepath.Join(base, "empty")
+	if err := os.MkdirAll(green, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := Classify(green); err != nil || c.Kind != KindGreenfield {
+		t.Errorf("greenfield: Kind = %v, err = %v, want KindGreenfield", c.Kind, err)
+	}
+
+	normal := filepath.Join(base, "normal")
+	if _, _, err := runner.Default.Run(context.Background(), "git", "init", normal); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	if c, err := Classify(normal); err != nil || c.Kind != KindNormalRoot {
+		t.Errorf("normal root: Kind = %v, err = %v, want KindNormalRoot", c.Kind, err)
+	}
+}
 
 // setProbe wires canned rev-parse answers for a dir. Keys must match the
 // flags Classify issues (each flag queried individually).

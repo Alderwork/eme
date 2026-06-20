@@ -78,7 +78,12 @@ func Classify(dir string) (Classification, error) {
 		return Classification{Kind: KindNestedBare, TopLevel: canon}, nil
 	}
 
-	if _, err := probe(canon, "rev-parse", "--is-inside-work-tree"); err != nil {
+	// A bare repository answers --is-inside-work-tree with "false" and exit 0
+	// (it does NOT error), while a non-repo errors. Gate on the output string,
+	// not just the error, or a standalone bare repo falls through to the
+	// work-tree path, --show-toplevel returns empty, and it is misclassified as
+	// a subdirectory with an empty TopLevel.
+	if inside, wtErr := probe(canon, "rev-parse", "--is-inside-work-tree"); wtErr != nil || inside != "true" {
 		// Not inside a work tree: bare repo, greenfield, or broken pointer.
 		if bare, berr := probe(canon, "rev-parse", "--is-bare-repository"); berr == nil && bare == "true" {
 			return Classification{Kind: KindBareRepo, TopLevel: canon}, nil
