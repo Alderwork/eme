@@ -172,8 +172,12 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.runChild("new", "--worktree", w.SessionID, "--no-switch")
 			}
 		case "a":
-			if w := m.selected(); w != nil {
-				return m, m.runChild("agent", w.SessionID, w.Name)
+			if args, ok := m.AgentArgs(false); ok {
+				return m, m.runChild(args...)
+			}
+		case "A":
+			if args, ok := m.AgentArgs(true); ok {
+				return m, m.runChild(args...)
 			}
 		case "d":
 			if w := m.selected(); w != nil {
@@ -256,7 +260,7 @@ func (m *DashboardModel) View() string {
 		bottom = append(bottom, errorStyle.Render(m.notice))
 	}
 	if m.showHelp {
-		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · n new · c worktree · a agent · d kill · q quit · ?"))
+		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · n new · c worktree · a agent · A pick · d kill · q quit · ?"))
 	} else {
 		bottom = append(bottom, helpStyle.Render("↑↓ move · ↵ open · n new · d kill · ? more · q quit"))
 	}
@@ -338,6 +342,20 @@ func (m *DashboardModel) refresh(actionErr error) {
 	}
 	m.views = views
 	m.rebuildRows()
+}
+
+// AgentArgs returns the `eme agent …` child argv for the selected worktree, or
+// ok=false when nothing is selected. pick appends --pick to open the catalog.
+func (m *DashboardModel) AgentArgs(pick bool) ([]string, bool) {
+	w := m.selected()
+	if w == nil {
+		return nil, false
+	}
+	args := []string{"agent", w.SessionID, w.Name}
+	if pick {
+		args = append(args, "--pick")
+	}
+	return args, true
 }
 
 // runChild runs `eme <args...>` as a child process, pausing the dashboard and
