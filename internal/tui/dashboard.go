@@ -204,8 +204,12 @@ func (m *DashboardModel) View() string {
 				if trailer == "" && w.HasDiff {
 					trailer = addStyle.Render(fmt.Sprintf("+%d", w.Added)) + " " + delStyle.Render(fmt.Sprintf("-%d", w.Deleted))
 				}
-				b.WriteString(fmt.Sprintf("  %s%s %s  %s  %s\n",
-					marker, nameCell, branchStyle.Render(fmt.Sprintf("%-16s", w.Branch)), status, trailer))
+				row := fmt.Sprintf("  %s%s %s  %s",
+					marker, nameCell, branchStyle.Render(fmt.Sprintf("%-16s", w.Branch)), status)
+				if trailer != "" {
+					row += "  " + trailer
+				}
+				b.WriteString(row + "\n")
 				rowi++
 			}
 			b.WriteString("\n")
