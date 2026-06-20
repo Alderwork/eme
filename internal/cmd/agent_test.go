@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
+	"github.com/jinmu/eme/internal/config"
 	"github.com/jinmu/eme/internal/runner"
 	"github.com/jinmu/eme/internal/state"
+	"github.com/jinmu/eme/internal/tui"
 )
 
 // stubWhich makes runner.Default answer `which <bin>` successfully and restores
@@ -39,6 +42,125 @@ func tempState(t *testing.T) {
 	prev := statePath
 	statePath = filepath.Join(t.TempDir(), "state.json")
 	t.Cleanup(func() { statePath = prev })
+}
+
+func TestAgentItems_MarksInstalledAndAppendsNone(t *testing.T) {
+	prev := lookPath
+	lookPath = func(bin string) (string, error) {
+		if bin == "claude" {
+			return "/usr/local/bin/claude", nil
+		}
+		return "", fmt.Errorf("not found")
+	}
+	t.Cleanup(func() { lookPath = prev })
+
+	items := agentItems([]config.AgentSpec{
+		{Name: "claude", Command: "claude"},
+		{Name: "codex", Command: "codex"},
+	})
+
+	if len(items) != 3 { // 2 agents + none
+		t.Fatalf("len(items) = %d, want 3", len(items))
+	}
+	if !items[0].Installed || items[0].Name != "claude" {
+		t.Errorf("items[0] = %+v, want installed claude", items[0])
+	}
+	if items[1].Installed {
+		t.Errorf("codex should be not-installed: %+v", items[1])
+	}
+	if !items[2].None || !items[2].Installed {
+		t.Errorf("last item should be installed none row: %+v", items[2])
+	}
+}
+
+func TestChooseAndLaunchAgent_AppliesAndLaunchesOnSelection(t *testing.T) {
+	tempState(t)
+	stubWhich(t, "claude")
+	var line string
+	var target string
+	captureSendKeys(t, &target, &line)
+
+	prevPick := pickAgent
+	pickAgent = func(items []tui.AgentItem, def string) (tui.AgentItem, bool, bool, error) {
+		return tui.AgentItem{Name: "claude", Command: "claude", Installed: true}, false, false, nil
+	}
+	t.Cleanup(func() { pickAgent = prevPick })
+	prevLook := lookPath
+	lookPath = func(bin string) (string, error) { return "/x/" + bin, nil }
+	t.Cleanup(func() { lookPath = prevLook })
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp", DisplayName: "myapp"}
+	w := &state.Worktree{Name: "main", Path: "/p/main", TmuxWindowID: "@1"}
+
+	var applied string
+	err := chooseAndLaunchAgent(s, sess, w, "", func(cmd string) { applied = cmd })
+	if err != nil {
+		t.Fatalf("chooseAndLaunchAgent: %v", err)
+	}
+	if applied != "claude" {
+		t.Errorf("apply got %q, want claude", applied)
+	}
+	if line != "claude" {
+		t.Errorf("launched line = %q, want claude", line)
+	}
+}
+
+func TestChooseAndLaunchAgent_NoneDoesNotApplyOrLaunch(t *testing.T) {
+	tempState(t)
+	var line string
+	var target string
+	captureSendKeys(t, &target, &line)
+
+	prevPick := pickAgent
+	pickAgent = func(items []tui.AgentItem, def string) (tui.AgentItem, bool, bool, error) {
+		return tui.AgentItem{}, true, false, nil // none
+	}
+	t.Cleanup(func() { pickAgent = prevPick })
+	prevLook := lookPath
+	lookPath = func(bin string) (string, error) { return "/x/" + bin, nil }
+	t.Cleanup(func() { lookPath = prevLook })
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp"}
+	w := &state.Worktree{Name: "main", TmuxWindowID: "@1"}
+
+	applied := false
+	if err := chooseAndLaunchAgent(s, sess, w, "", func(string) { applied = true }); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if applied {
+		t.Error("apply must not be called for none")
+	}
+	if line != "" {
+		t.Errorf("must not launch for none; sent %q", line)
+	}
+}
+
+func TestChooseAndLaunchAgent_SkipsPickerWhenNothingInstalled(t *testing.T) {
+	prevLook := lookPath
+	lookPath = func(bin string) (string, error) { return "", fmt.Errorf("not found") }
+	t.Cleanup(func() { lookPath = prevLook })
+	prevPick := pickAgent
+	pickAgent = func(items []tui.AgentItem, def string) (tui.AgentItem, bool, bool, error) {
+		t.Fatal("picker must not run when no agents are installed")
+		return tui.AgentItem{}, false, true, nil
+	}
+	t.Cleanup(func() { pickAgent = prevPick })
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "x"}
+	w := &state.Worktree{Name: "main", TmuxWindowID: "@1"}
+
+	if err := chooseAndLaunchAgent(s, sess, w, "", func(string) {}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+}
+
+func TestAgentPickFlagRegistered(t *testing.T) {
+	if agentCmd.Flags().Lookup("pick") == nil {
+		t.Errorf("--pick flag not registered on agentCmd")
+	}
 }
 
 func TestLaunchAgentCommand_SendsBareCommand(t *testing.T) {

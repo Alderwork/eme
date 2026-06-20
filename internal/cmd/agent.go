@@ -4,23 +4,114 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
+	"github.com/jinmu/eme/internal/config"
 	"github.com/jinmu/eme/internal/errors"
 	"github.com/jinmu/eme/internal/runner"
 	"github.com/jinmu/eme/internal/state"
 	"github.com/jinmu/eme/internal/tmux"
+	"github.com/jinmu/eme/internal/tui"
 )
 
 var (
 	agentDryRun bool
+	agentPick   bool
 )
+
+// lookPath is the PATH lookup seam (swapped in tests).
+var lookPath = exec.LookPath
+
+// pickAgent runs the interactive agent picker. Swapped in tests.
+var pickAgent = runAgentPicker
 
 // sendKeys is the tmux send-keys seam (swapped in tests).
 var sendKeys = tmux.SendKeys
+
+// runAgentPicker shows the agent picker as a full-screen bubbletea program.
+func runAgentPicker(items []tui.AgentItem, defaultName string) (tui.AgentItem, bool, bool, error) {
+	picker := tui.NewAgentPicker(items, defaultName)
+	if _, err := tea.NewProgram(picker, tea.WithAltScreen()).Run(); err != nil {
+		return tui.AgentItem{}, false, false, fmt.Errorf("agent picker: %w", err)
+	}
+	if picker.Cancelled() {
+		return tui.AgentItem{}, false, true, nil
+	}
+	sel, ok := picker.Chosen()
+	if !ok {
+		return tui.AgentItem{}, false, true, nil // closed without choosing
+	}
+	return sel, sel.None, false, nil
+}
+
+// agentItems builds picker rows from a catalog, marking PATH-installed agents
+// selectable and appending a trailing "none" row.
+func agentItems(catalog []config.AgentSpec) []tui.AgentItem {
+	items := make([]tui.AgentItem, 0, len(catalog)+1)
+	for _, a := range catalog {
+		bin := a.Command
+		if fields := strings.Fields(a.Command); len(fields) > 0 {
+			bin = fields[0]
+		}
+		_, err := lookPath(bin)
+		items = append(items, tui.AgentItem{Name: a.Name, Command: a.Command, Installed: err == nil})
+	}
+	items = append(items, tui.AgentItem{Name: "none", None: true, Installed: true})
+	return items
+}
+
+// countInstalled counts selectable, non-none rows.
+func countInstalled(items []tui.AgentItem) int {
+	n := 0
+	for _, it := range items {
+		if it.Installed && !it.None {
+			n++
+		}
+	}
+	return n
+}
+
+// defaultAgentName returns the catalog name whose command (or name) matches the
+// given command, for pre-highlighting the picker. Empty when no match.
+func defaultAgentName(catalog []config.AgentSpec, command string) string {
+	for _, a := range catalog {
+		if a.Command == command || a.Name == command {
+			return a.Name
+		}
+	}
+	return ""
+}
+
+// chooseAndLaunchAgent shows the agent picker (pre-highlighting defaultCmd) and,
+// on a concrete selection, calls apply(command), persists state, and launches it
+// in w. "none", cancel, or an empty catalog leave everything untouched.
+func chooseAndLaunchAgent(s *state.State, sess *state.Session, w *state.Worktree, defaultCmd string, apply func(command string)) error {
+	var catalog []config.AgentSpec
+	if cfg != nil {
+		catalog = cfg.Catalog()
+	} else {
+		catalog = config.BuiltinAgents()
+	}
+	items := agentItems(catalog)
+	if countInstalled(items) == 0 {
+		fmt.Println("No agents found on PATH. Install claude, codex, gemini, or opencode, or set agent.command in ~/.config/eme/config.toml.")
+		return nil
+	}
+	sel, none, cancelled, err := pickAgent(items, defaultAgentName(catalog, defaultCmd))
+	if err != nil || none || cancelled {
+		return err
+	}
+	apply(sel.Command)
+	if err := saveState(s); err != nil {
+		return err
+	}
+	return launchAgentCommand(s, sess, w, sel.Command)
+}
 
 // resolvedAgentCommand resolves the effective agent command for a worktree:
 // the worktree override, then the session default, then the global config.
@@ -99,6 +190,18 @@ var agentCmd = &cobra.Command{
 			return err
 		}
 
+		if agentPick {
+			if w.AgentPID > 0 && processExists(w.AgentPID) {
+				return errors.New(errors.CodeCommandFailed,
+					"An agent is already running in this worktree.",
+					"Choosing a new agent would type into the running one.",
+					"Stop it first (press a), then choose a new one.")
+			}
+			return chooseAndLaunchAgent(s, sess, w, resolvedAgentCommand(sess, w), func(command string) {
+				w.AgentCommandOverride = command
+			})
+		}
+
 		return toggleAgent(s, sess, w)
 	},
 }
@@ -150,4 +253,5 @@ func killProcess(pid int) error {
 
 func init() {
 	agentCmd.Flags().BoolVar(&agentDryRun, "dry-run", false, "print planned actions without executing")
+	agentCmd.Flags().BoolVar(&agentPick, "pick", false, "choose the agent for this worktree from the catalog")
 }
