@@ -10,12 +10,26 @@ import (
 	"github.com/jinmu/eme/internal/tui"
 )
 
-// buildSessionViews maps reconciled state into render-ready dashboard views,
-// deriving each worktree's agent status from a tmux pane snapshot (taken once by
-// the caller), plus an optional diff stat and a short agent label. The snapshot is
+// buildSessionViews maps state into render-ready dashboard views with the FULL
+// inspection: agent status from the injected pane snapshot plus a per-worktree git
+// diff stat. Used on the initial load and after each child action. The snapshot is
 // injected so this stays pure and testable; status/git inspection lives here so the
 // tui package stays presentation-only.
 func buildSessionViews(sessions []state.Session, snap map[string]tmux.PaneInfo) []tui.SessionView {
+	return buildViews(sessions, snap, true)
+}
+
+// buildStatusViews is the cheap status-only path for the auto-refresh ticker (and,
+// later, the `eme status` segment): it derives agent status from the snapshot but
+// skips the per-worktree git diff — a subprocess per worktree that, at the tick
+// cadence across many worktrees, is real churn. The dashboard recomputes diffs only
+// on a full reload and carries the last-known stats forward between ticks.
+func buildStatusViews(sessions []state.Session, snap map[string]tmux.PaneInfo) []tui.SessionView {
+	return buildViews(sessions, snap, false)
+}
+
+// buildViews is the shared mapper; withDiff toggles the expensive git.DiffStat call.
+func buildViews(sessions []state.Session, snap map[string]tmux.PaneInfo, withDiff bool) []tui.SessionView {
 	views := make([]tui.SessionView, 0, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
@@ -34,8 +48,10 @@ func buildSessionViews(sessions []state.Session, snap map[string]tmux.PaneInfo) 
 			if status == tui.StatusWorking {
 				wv.AgentLabel = agentLabel(w)
 			}
-			if added, deleted, ok := git.DiffStat(w.Path); ok {
-				wv.Added, wv.Deleted, wv.HasDiff = added, deleted, true
+			if withDiff {
+				if added, deleted, ok := git.DiffStat(w.Path); ok {
+					wv.Added, wv.Deleted, wv.HasDiff = added, deleted, true
+				}
 			}
 			sv.Worktrees = append(sv.Worktrees, wv)
 		}

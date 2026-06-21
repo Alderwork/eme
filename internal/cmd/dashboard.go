@@ -45,6 +45,20 @@ func runDashboard() error {
 		}
 		return buildSessionViews(rs.Sessions, snap), nil
 	})
+	// The auto-refresh ticker uses a cheap status-only reload: raw state (no full
+	// reconcile) + the batched snapshot, skipping the per-worktree git diff. The model
+	// carries the last-known diff forward between ticks (PERF-2).
+	model.SetStatusReload(func() ([]tui.SessionView, error) {
+		st, err := loadState()
+		if err != nil {
+			return nil, err
+		}
+		snap, err := tmux.PanesSnapshot()
+		if err != nil {
+			return nil, err
+		}
+		return buildStatusViews(st.Sessions, snap), nil
+	})
 	finalModel, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)

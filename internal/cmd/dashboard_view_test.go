@@ -49,6 +49,34 @@ func TestAgentLabel(t *testing.T) {
 	}
 }
 
+// TestBuildStatusViews_SkipsGitDiff locks T3: the status-only path classifies agent
+// status but never shells out to git (no DiffStat), so the ticker stays cheap.
+func TestBuildStatusViews_SkipsGitDiff(t *testing.T) {
+	mock := runner.NewMock()
+	git.Runner = mock
+	defer func() { git.Runner = runner.Default }()
+
+	sessions := []state.Session{{
+		ID: "myapp", DisplayName: "myapp", Root: "/code/myapp",
+		Worktrees: []state.Worktree{
+			{Name: "feat", Branch: "feat/x", TmuxWindowID: "@2", LastAgentCommand: "claude"},
+		},
+	}}
+	snap := map[string]tmux.PaneInfo{"@2": {Dead: false, Command: "node"}}
+
+	views := buildStatusViews(sessions, snap)
+	if len(mock.Calls) != 0 {
+		t.Errorf("status-only build must not shell out to git, made %d call(s): %+v", len(mock.Calls), mock.Calls)
+	}
+	w := views[0].Worktrees[0]
+	if w.Status != tui.StatusWorking {
+		t.Errorf("status = %v, want StatusWorking", w.Status)
+	}
+	if w.HasDiff {
+		t.Error("status-only build must not populate diff")
+	}
+}
+
 func TestBuildSessionViews_MapsFields(t *testing.T) {
 	git.Runner = runner.NewMock()
 	defer func() { git.Runner = runner.Default }()

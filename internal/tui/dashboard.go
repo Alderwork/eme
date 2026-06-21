@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -76,9 +77,13 @@ type DashboardModel struct {
 	leaving       bool
 	leaveSession  string
 	leaveWorktree string
-	// reload re-reads the view-model after a child action returns. May be nil
-	// (tests), in which case the list is not refreshed.
+	// reload re-reads the FULL view-model (status + git diff, via reconcile) after a
+	// child action returns. May be nil (tests), in which case the list is not refreshed.
 	reload func() ([]SessionView, error)
+	// statusReload is the cheap status-only reload the auto-refresh ticker uses (raw
+	// state + snapshot, no git diff / reconcile). Installed via SetStatusReload; when
+	// nil the ticker is inert.
+	statusReload func() ([]SessionView, error)
 }
 
 // NewDashboard creates a dashboard model. reload is called after each child
@@ -130,8 +135,22 @@ func (m *DashboardModel) needsYouCount() int {
 // actionFinishedMsg is delivered after a child `eme` process exits.
 type actionFinishedMsg struct{ err error }
 
-// Init implements tea.Model.
-func (m *DashboardModel) Init() tea.Cmd { return nil }
+// tickMsg drives the auto-refresh ticker.
+type tickMsg struct{}
+
+// refreshInterval is the dashboard's auto-refresh cadence. 2s matches the tmux
+// status bar's status-interval, so the popup and the ambient segment stay in step,
+// and is cheap because ticks take the status-only read path.
+const refreshInterval = 2 * time.Second
+
+// tick schedules the next auto-refresh.
+func (m *DashboardModel) tick() tea.Cmd {
+	return tea.Tick(refreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+// Init implements tea.Model. It starts the auto-refresh ticker so the beacon lights
+// without a keypress.
+func (m *DashboardModel) Init() tea.Cmd { return m.tick() }
 
 // Update implements tea.Model.
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -201,6 +220,9 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case actionFinishedMsg:
 		m.refresh(msg.err)
+	case tickMsg:
+		m.tickReload()
+		return m, m.tick()
 	}
 	return m, nil
 }
@@ -366,8 +388,73 @@ func (m *DashboardModel) refresh(actionErr error) {
 		m.notice = "refresh failed: " + err.Error()
 		return
 	}
+	m.applyViews(views)
+}
+
+// SetStatusReload installs the cheap status-only reload the auto-refresh ticker uses
+// (raw state + snapshot, no git diff / reconcile). Separate from the full post-action
+// reload so ticks stay cheap.
+func (m *DashboardModel) SetStatusReload(fn func() ([]SessionView, error)) {
+	m.statusReload = fn
+}
+
+// tickReload refreshes agent status from the cheap snapshot path on each tick,
+// carrying the last-known diff forward (the status path skips git diff) and keeping
+// the cursor sticky. A transient read failure is silent — last-known views are kept,
+// never a guessed status (F1).
+func (m *DashboardModel) tickReload() {
+	if m.statusReload == nil {
+		return
+	}
+	views, err := m.statusReload()
+	if err != nil {
+		return
+	}
+	carryDiffStats(views, m.views)
+	m.applyViews(views)
+}
+
+// applyViews swaps in a fresh view-model while keeping the cursor on the same
+// worktree by (session, worktree) identity — so an auto-refresh never makes the
+// selection jump under the user (ARCH-5). Falls back to the clamped index (from
+// rebuildRows) when the selected worktree is gone.
+func (m *DashboardModel) applyViews(views []SessionView) {
+	var selID, selName string
+	if w := m.selected(); w != nil {
+		selID, selName = w.SessionID, w.Name
+	}
 	m.views = views
 	m.rebuildRows()
+	if selID == "" {
+		return
+	}
+	for i, r := range m.rows {
+		if w := m.views[r.session].Worktrees[r.worktree]; w.SessionID == selID && w.Name == selName {
+			m.cursor = i
+			return
+		}
+	}
+}
+
+// carryDiffStats copies the diff columns from src into dst by worktree identity, so
+// the cheap status-only tick path (which skips git diff) does not blank a worktree's
+// +N/-M between full reloads.
+func carryDiffStats(dst, src []SessionView) {
+	type key struct{ sid, name string }
+	prev := make(map[key]WorktreeView)
+	for si := range src {
+		for _, w := range src[si].Worktrees {
+			prev[key{w.SessionID, w.Name}] = w
+		}
+	}
+	for si := range dst {
+		for wi := range dst[si].Worktrees {
+			w := &dst[si].Worktrees[wi]
+			if p, ok := prev[key{w.SessionID, w.Name}]; ok {
+				w.Added, w.Deleted, w.HasDiff = p.Added, p.Deleted, p.HasDiff
+			}
+		}
+	}
 }
 
 // AgentArgs returns the `eme agent …` child argv for the selected worktree, or

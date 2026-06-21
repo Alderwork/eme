@@ -100,6 +100,123 @@ func TestDashboardRefreshReloadErrorKeepsLastKnown(t *testing.T) {
 	}
 }
 
+// TestDashboardStickyCursorAcrossReload locks ARCH-5: when the row set reorders
+// under the cursor (a session appears), the selection stays on the SAME worktree by
+// identity rather than a fixed index.
+func TestDashboardStickyCursorAcrossReload(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/feat
+	if w := m.selected(); w == nil || w.Name != "feat" {
+		t.Fatalf("precondition: cursor should be on feat, got %+v", m.selected())
+	}
+
+	// A new session appears at the top, pushing myapp/feat from index 1 to index 2.
+	reordered := []SessionView{
+		{DisplayName: "api", Root: "/code/api", Worktrees: []WorktreeView{
+			{Name: "main", Branch: "main", SessionID: "api", IsMain: true, Status: StatusIdle},
+		}},
+		{DisplayName: "myapp", Root: "/code/myapp", Worktrees: []WorktreeView{
+			{Name: "main", Branch: "main", SessionID: "myapp", IsMain: true, Status: StatusWorking},
+			{Name: "feat", Branch: "feat/x", SessionID: "myapp", Status: StatusCrashed},
+		}},
+	}
+	m.applyViews(reordered)
+
+	if w := m.selected(); w == nil || w.SessionID != "myapp" || w.Name != "feat" {
+		t.Errorf("cursor jumped off feat after reorder; selected = %+v", m.selected())
+	}
+	if m.cursor != 2 {
+		t.Errorf("cursor = %d, want 2 (feat's new index)", m.cursor)
+	}
+}
+
+// TestDashboardStickyCursorFallsBackWhenSelectionGone: if the selected worktree
+// disappears, the cursor falls back to a clamped, valid index (no panic).
+func TestDashboardStickyCursorFallsBackWhenSelectionGone(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/feat
+
+	m.applyViews([]SessionView{
+		{DisplayName: "api", Root: "/code/api", Worktrees: []WorktreeView{
+			{Name: "main", SessionID: "api", IsMain: true, Status: StatusIdle},
+		}},
+	})
+
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		t.Fatalf("cursor %d out of range after selection vanished (rows=%d)", m.cursor, len(m.rows))
+	}
+	if w := m.selected(); w == nil {
+		t.Error("selected() should be valid after fallback, got nil")
+	}
+}
+
+// TestDashboardTickReloadStatusLiveDiffCarried locks the tick contract: status goes
+// live from the cheap reload while the last-known git diff is carried forward, and
+// the cursor stays put.
+func TestDashboardTickReloadStatusLiveDiffCarried(t *testing.T) {
+	initial := []SessionView{
+		{DisplayName: "myapp", Root: "/code/myapp", Worktrees: []WorktreeView{
+			{Name: "feat", Branch: "feat/x", SessionID: "myapp", Status: StatusIdle,
+				Added: 3, Deleted: 1, HasDiff: true},
+		}},
+	}
+	m := NewDashboard(initial, nil)
+	m.cursor = 0
+
+	// The status-only reload reports the agent now running and (as the cheap path)
+	// carries NO diff of its own.
+	m.SetStatusReload(func() ([]SessionView, error) {
+		return []SessionView{
+			{DisplayName: "myapp", Root: "/code/myapp", Worktrees: []WorktreeView{
+				{Name: "feat", Branch: "feat/x", SessionID: "myapp", Status: StatusWorking},
+			}},
+		}, nil
+	})
+	m.tickReload()
+
+	w := m.selected()
+	if w == nil || w.Name != "feat" {
+		t.Fatalf("cursor lost feat after tick; selected = %+v", w)
+	}
+	if w.Status != StatusWorking {
+		t.Errorf("status = %v, want StatusWorking (live from tick)", w.Status)
+	}
+	if !w.HasDiff || w.Added != 3 || w.Deleted != 1 {
+		t.Errorf("diff not carried: HasDiff=%v +%d -%d, want +3 -1", w.HasDiff, w.Added, w.Deleted)
+	}
+}
+
+// TestDashboardTickReloadErrorKeepsLastKnown: a transient status-read failure is
+// silent and preserves last-known views (F1).
+func TestDashboardTickReloadErrorKeepsLastKnown(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.SetStatusReload(func() ([]SessionView, error) { return nil, errors.New("snapshot read failed") })
+	rowsBefore := len(m.rows)
+	statusBefore := m.views[0].Worktrees[0].Status
+
+	m.tickReload()
+
+	if len(m.rows) != rowsBefore {
+		t.Errorf("rows = %d, want %d preserved on tick error", len(m.rows), rowsBefore)
+	}
+	if m.views[0].Worktrees[0].Status != statusBefore {
+		t.Error("status changed on a failed tick; must keep last-known")
+	}
+	if m.notice != "" {
+		t.Errorf("tick failure should be silent, notice = %q", m.notice)
+	}
+}
+
+// TestDashboardTickReloadNilIsNoop: with no statusReload installed the tick is inert.
+func TestDashboardTickReloadNilIsNoop(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	rowsBefore := len(m.rows)
+	m.tickReload() // must not panic
+	if len(m.rows) != rowsBefore {
+		t.Errorf("rows changed on a no-op tick: %d != %d", len(m.rows), rowsBefore)
+	}
+}
+
 func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
 	m.refresh(errors.New("kill failed"))
