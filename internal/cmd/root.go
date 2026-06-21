@@ -75,6 +75,7 @@ func init() {
 	rootCmd.AddCommand(switchCmd)
 	rootCmd.AddCommand(killCmd)
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(statusCmd)
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(forgetCmd)
 	rootCmd.AddCommand(versionCmd)

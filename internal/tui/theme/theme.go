@@ -82,3 +82,32 @@ func resolveBeacon() lipgloss.TerminalColor {
 	}
 	return defaultBeacon
 }
+
+// preferLight reports whether the light-terminal variant should be used, honoring
+// the EME_THEME override (the same knob ApplyBackground reads).
+func preferLight() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("EME_THEME")), "light")
+}
+
+// TmuxReset closes a TmuxFg span, restoring the status bar's own foreground without
+// touching its background (eme never overrides the host bar's platform).
+const TmuxReset = "#[fg=default]"
+
+// DangerTmux and BeaconTmux return tmux status-bar foreground tokens for the ambient
+// `eme status --tmux` segment, which speaks tmux's #[fg=colourN] dialect rather than
+// lipgloss ANSI. The ANSI256 indices mirror the Danger/Beacon roles above. Color is
+// enhancement only — the segment's glyph still carries the meaning on a monochrome or
+// colorblind bar — so these intentionally degrade to a plain 256-color index.
+func DangerTmux() string {
+	if preferLight() {
+		return "#[fg=colour130]"
+	}
+	return "#[fg=colour166]"
+}
+
+func BeaconTmux() string {
+	if preferLight() {
+		return "#[fg=colour130]"
+	}
+	return "#[fg=colour214]"
+}

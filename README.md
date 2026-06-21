@@ -37,6 +37,21 @@ launch context (including plain shells outside tmux), pin it with
 `[tmux] socket = "<name>"` in `~/.config/eme/config.toml` or
 `EME_TMUX_SOCKET=<name>`. Run `eme doctor` to see which server is in use.
 
+### Ambient status segment (optional)
+
+Surface the signal in your tmux status bar so you see a crashed agent without
+opening eme. Append the segment to your existing `status-right` — eme never edits
+your config — and let tmux poll it:
+
+```tmux
+set -g status-interval 2
+set -ga status-right '#(eme status --tmux)'
+```
+
+It is empty (a dark cockpit) when nothing needs you, and shows a glyph-led count
+when agents crash — e.g. `✗2`. It reads on a monochrome or colorblind bar; color
+is enhancement only. The amber `●` beacon for *waiting* agents is a fast-follow.
+
 ## Quick start
 
 1. Press `<prefix> a` to open the dashboard.
@@ -54,6 +69,7 @@ eme switch <id>    # switch to session/window
 eme kill <id>      # remove worktree + kill window
 eme agent <id>     # start/stop/toggle agent
 eme agent <id> --pick  # choose the worktree's agent from the catalog
+eme status --tmux  # ambient status-bar segment (✗N when agents crash)
 eme doctor         # verify environment
 eme --version      # print version
 ```
