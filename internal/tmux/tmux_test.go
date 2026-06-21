@@ -132,3 +132,54 @@ func TestSwitchClient_UsesSwitchClientNotSelectWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestCapturePane_TailAndTrim verifies the peek read trims a pane's trailing blank
+// padding and returns only the last n lines, read-only.
+func TestCapturePane_TailAndTrim(t *testing.T) {
+	mock := runner.NewMock()
+	oldRunner := Runner
+	Runner = mock
+	defer func() { Runner = oldRunner }()
+	oldSocket := Socket
+	Socket = ""
+	defer func() { Socket = oldSocket }()
+
+	out := "line1\nline2\nline3\nline4\nline5\nline6\n\n\n"
+	mock.Set("tmux", []string{"capture-pane", "-p", "-t", "proj:@7"}, out, "", nil)
+
+	got, err := CapturePane("proj", "@7", 3)
+	if err != nil {
+		t.Fatalf("CapturePane returned error: %v", err)
+	}
+	want := []string{"line4", "line5", "line6"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines %v, want %v", len(got), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestCapturePane_EmptyPane: an all-blank pane peeks to zero lines, not a slice of
+// empty strings.
+func TestCapturePane_EmptyPane(t *testing.T) {
+	mock := runner.NewMock()
+	oldRunner := Runner
+	Runner = mock
+	defer func() { Runner = oldRunner }()
+	oldSocket := Socket
+	Socket = ""
+	defer func() { Socket = oldSocket }()
+
+	mock.Set("tmux", []string{"capture-pane", "-p", "-t", "proj:@7"}, "\n\n\n", "", nil)
+
+	got, err := CapturePane("proj", "@7", 5)
+	if err != nil {
+		t.Fatalf("CapturePane returned error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d lines %v, want 0 for a blank pane", len(got), got)
+	}
+}

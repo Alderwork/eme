@@ -348,6 +348,28 @@ func RespawnPane(session, windowID, cwd string) error {
 	return nil
 }
 
+// CapturePane returns the last n non-blank lines of a window's pane content, for the
+// read-only preview peek (DESIGN §5.7). capture-pane -p prints the pane without -e,
+// so the result is plain text (no escape sequences) and the read never mutates the
+// pane — safe on a live agent.
+func CapturePane(session, windowID string, n int) ([]string, error) {
+	target := session + ":" + windowID
+	out, _, err := tmux("capture-pane", "-p", "-t", target)
+	if err != nil {
+		return nil, fmt.Errorf("tmux capture-pane: %w", err)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	// A pane is padded to its full height, so trim trailing blank lines before taking
+	// the tail — otherwise the peek shows mostly empty rows.
+	for len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if n > 0 && len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines, nil
+}
+
 // PopupSize returns the dimensions available for a tmux popup in the current client.
 func PopupSize() (width, height int, err error) {
 	out, _, err := tmux("display", "-p", "#{popup_width}\t#{popup_height}")

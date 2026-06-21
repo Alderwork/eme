@@ -84,6 +84,14 @@ type DashboardModel struct {
 	// state + snapshot, no git diff / reconcile). Installed via SetStatusReload; when
 	// nil the ticker is inert.
 	statusReload func() ([]SessionView, error)
+	// peek captures the selected pane's last lines on demand (read-only). Installed
+	// via SetPeek; when nil the `p` peek is inert. peeking/peekLines/peekLabel hold
+	// the current on-demand peek — a momentary glance, not a standing panel, so they
+	// are cleared the moment the cursor moves (DESIGN §5.7).
+	peek      func(sessionID, worktreeName string) ([]string, error)
+	peeking   bool
+	peekLines []string
+	peekLabel string
 }
 
 // NewDashboard creates a dashboard model. reload is called after each child
@@ -173,13 +181,17 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.showHelp = !m.showHelp
 		case "up", "k":
+			m.closePeek() // the peek belonged to the row we're leaving
 			if m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
+			m.closePeek()
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 			}
+		case "p":
+			m.togglePeek()
 		case "enter", "o":
 			if w := m.selected(); w != nil {
 				// Record the target and quit cleanly; the cmd layer execs
@@ -281,13 +293,16 @@ func (m *DashboardModel) View() string {
 	// Bottom block: a transient notice/confirm line then the footer, pinned to
 	// the panel's last rows.
 	var bottom []string
+	if m.peeking {
+		bottom = append(bottom, m.peekBlock(inner)...)
+	}
 	if m.pending != nil {
 		bottom = append(bottom, errorStyle.Render("kill "+m.pending.label+"?  y = confirm · any other key = cancel"))
 	} else if m.notice != "" {
 		bottom = append(bottom, errorStyle.Render(m.notice))
 	}
 	if m.showHelp {
-		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · n new · c worktree · a agent · A pick · d kill · q quit · ?"))
+		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · p peek · n new · c worktree · a agent · A pick · d kill · q quit · ?"))
 	} else {
 		bottom = append(bottom, helpStyle.Render("↑↓ move · ↵ open · n new · d kill · ? more · q quit"))
 	}
@@ -357,6 +372,24 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 	return row
 }
 
+// peekBlock renders the on-demand peek: a quiet rule, a label, then the captured
+// last lines — all muted so the peek stays subordinate to the tree and never
+// competes with the beacon. Rendered only while peeking, so it spends zero rows
+// otherwise (DESIGN §5.7).
+func (m *DashboardModel) peekBlock(inner int) []string {
+	out := []string{
+		mutedStyle.Render(strings.Repeat("─", inner)),
+		mutedStyle.Render("peek " + m.peekLabel),
+	}
+	if len(m.peekLines) == 0 {
+		return append(out, mutedStyle.Render("  (no output)"))
+	}
+	for _, ln := range m.peekLines {
+		out = append(out, mutedStyle.Render("  "+truncate(ln, inner-2)))
+	}
+	return out
+}
+
 // truncate shortens s to at most max display columns, adding an ellipsis.
 func truncate(s string, max int) string {
 	if max < 1 {
@@ -396,6 +429,41 @@ func (m *DashboardModel) refresh(actionErr error) {
 // reload so ticks stay cheap.
 func (m *DashboardModel) SetStatusReload(fn func() ([]SessionView, error)) {
 	m.statusReload = fn
+}
+
+// SetPeek installs the read-only pane-capture used by the `p` peek. When nil the
+// peek is inert (e.g. in tests).
+func (m *DashboardModel) SetPeek(fn func(sessionID, worktreeName string) ([]string, error)) {
+	m.peek = fn
+}
+
+// togglePeek opens the on-demand peek for the selected worktree, or closes it if
+// already open. The capture is read once (a momentary glance, not a live tail); a
+// failure surfaces as a transient notice and leaves the peek closed.
+func (m *DashboardModel) togglePeek() {
+	if m.peeking {
+		m.closePeek()
+		return
+	}
+	w := m.selected()
+	if w == nil || m.peek == nil {
+		return
+	}
+	lines, err := m.peek(w.SessionID, w.Name)
+	if err != nil {
+		m.notice = "peek failed: " + err.Error()
+		return
+	}
+	m.peeking = true
+	m.peekLines = lines
+	m.peekLabel = w.Name
+}
+
+// closePeek clears the peek so no rows are spent when not peeking.
+func (m *DashboardModel) closePeek() {
+	m.peeking = false
+	m.peekLines = nil
+	m.peekLabel = ""
 }
 
 // tickReload refreshes agent status from the cheap snapshot path on each tick,

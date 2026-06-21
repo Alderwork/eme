@@ -217,6 +217,78 @@ func TestDashboardTickReloadNilIsNoop(t *testing.T) {
 	}
 }
 
+// TestDashboardPeekToggle: `p` opens the read-only peek for the selected worktree
+// and renders the captured lines; `p` again closes it.
+func TestDashboardPeekToggle(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/feat
+	var gotID, gotName string
+	m.SetPeek(func(id, name string) ([]string, error) {
+		gotID, gotName = id, name
+		return []string{"building...", "done"}, nil
+	})
+
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("p should open the peek")
+	}
+	if gotID != "myapp" || gotName != "feat" {
+		t.Errorf("peek targeted %s/%s, want myapp/feat", gotID, gotName)
+	}
+	if len(m.peekLines) != 2 || m.peekLines[1] != "done" {
+		t.Errorf("peekLines = %v, want the captured lines", m.peekLines)
+	}
+	if !strings.Contains(m.View(), "done") {
+		t.Error("View should show the peeked lines while peeking")
+	}
+
+	m.Update(runeKey('p'))
+	if m.peeking {
+		t.Error("second p should close the peek")
+	}
+	if strings.Contains(m.View(), "done") {
+		t.Error("closed peek must spend zero rows")
+	}
+}
+
+// TestDashboardPeekClosesOnMove: the peek belongs to the row it was opened on, so
+// moving the cursor closes it (never a standing panel; DESIGN §5.7).
+func TestDashboardPeekClosesOnMove(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.SetPeek(func(id, name string) ([]string, error) { return []string{"x"}, nil })
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("precondition: peek open")
+	}
+	m.Update(runeKey('j'))
+	if m.peeking {
+		t.Error("moving down should close the peek")
+	}
+}
+
+// TestDashboardPeekNilSeamIsNoop: with no peek installed, `p` is inert (no panic).
+func TestDashboardPeekNilSeamIsNoop(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.Update(runeKey('p'))
+	if m.peeking {
+		t.Error("p with no peek seam should stay closed")
+	}
+}
+
+// TestDashboardPeekErrorSurfacesNotice: a capture failure shows a transient notice
+// and leaves the peek closed (never a false panel).
+func TestDashboardPeekErrorSurfacesNotice(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.SetPeek(func(id, name string) ([]string, error) { return nil, errors.New("pane gone") })
+	m.Update(runeKey('p'))
+	if m.peeking {
+		t.Error("peek should stay closed on error")
+	}
+	if m.notice != "peek failed: pane gone" {
+		t.Errorf("notice = %q, want the peek error surfaced", m.notice)
+	}
+}
+
 func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
 	m.refresh(errors.New("kill failed"))
