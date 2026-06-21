@@ -67,6 +67,7 @@ eme                # dashboard
 eme new            # fuzzy folder picker → new project + main worktree
 eme switch <id>    # switch to session/window
 eme kill <id>      # remove worktree + kill window
+eme clean <id>     # reset a crashed/exited worktree's pane to idle
 eme agent <id>     # start/stop/toggle agent
 eme agent <id> --pick  # choose the worktree's agent from the catalog
 eme status --tmux  # ambient status-bar segment (✗N when agents crash)

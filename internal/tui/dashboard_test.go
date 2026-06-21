@@ -289,6 +289,28 @@ func TestDashboardPeekErrorSurfacesNotice(t *testing.T) {
 	}
 }
 
+// TestDashboardCleanKeyRunsChildForDeadPane: `x` on a crashed worktree dispatches
+// the `eme clean` child (which respawns the dead pane and clears the record).
+func TestDashboardCleanKeyRunsChildForDeadPane(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/feat, StatusCrashed
+	_, cmd := m.Update(runeKey('x'))
+	if cmd == nil {
+		t.Error("x on a crashed worktree should run the clean child")
+	}
+}
+
+// TestDashboardCleanKeyNoopForLivePane: `x` is gated to dead-pane statuses, so it is
+// a no-op on a running (or idle) worktree — never disturbing a live agent.
+func TestDashboardCleanKeyNoopForLivePane(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 0 // myapp/main, StatusWorking
+	_, cmd := m.Update(runeKey('x'))
+	if cmd != nil {
+		t.Error("x on a running worktree should be a no-op")
+	}
+}
+
 func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
 	m.refresh(errors.New("kill failed"))

@@ -215,6 +215,13 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if args, ok := m.AgentArgs(true); ok {
 				return m, m.runChild(args...)
 			}
+		case "x":
+			// Clear a finished agent's frozen pane back to idle. Gated to dead-pane
+			// statuses so it never disturbs a live or never-run worktree; `eme clean`
+			// guards again on its own. The refresh after the child shows it idle.
+			if w := m.selected(); w != nil && (w.Status == StatusCrashed || w.Status == StatusExited) {
+				return m, m.runChild("clean", w.SessionID, w.Name)
+			}
 		case "d":
 			if w := m.selected(); w != nil {
 				t := &killTarget{sessionID: w.SessionID, worktreeName: w.Name, isMain: w.IsMain}
@@ -302,7 +309,7 @@ func (m *DashboardModel) View() string {
 		bottom = append(bottom, errorStyle.Render(m.notice))
 	}
 	if m.showHelp {
-		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · p peek · n new · c worktree · a agent · A pick · d kill · q quit · ?"))
+		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ↵/o open · p peek · n new · c worktree · a agent · A pick · x clean · d kill · q quit · ?"))
 	} else {
 		bottom = append(bottom, helpStyle.Render("↑↓ move · ↵ open · n new · d kill · ? more · q quit"))
 	}
