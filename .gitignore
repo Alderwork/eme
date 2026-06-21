@@ -6,3 +6,7 @@
 
 # local docs (untracked)
 /docs/
+.gstack/
+
+# macOS
+.DS_Store
