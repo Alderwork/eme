@@ -12,6 +12,7 @@ import (
 	"github.com/jinmu/eme/internal/runner"
 	"github.com/jinmu/eme/internal/state"
 	"github.com/jinmu/eme/internal/tmux"
+	"github.com/jinmu/eme/internal/tui"
 )
 
 func TestDirIsEffectivelyEmpty(t *testing.T) {
@@ -257,6 +258,69 @@ func TestCreateWorktree_ChecksOutExistingBranch(t *testing.T) {
 	reloaded, _ := loadState()
 	if reloaded.Sessions[0].WorktreeByName(name) == nil {
 		t.Errorf("checked-out worktree %q was not registered", name)
+	}
+}
+
+// TestCreateWorktree_OffersAgentPicker is the regression for the dashboard `c` flow: a
+// freshly created worktree must offer the agent picker (worktree-per-agent), exactly as a
+// new project does. The bug was that createWorktree finished at a bare shell and never
+// onboarded an agent, so `c` + name left no picker. The spy cancels, keeping the test
+// about the wiring (picker offered) rather than the launch mechanics.
+func TestCreateWorktree_OffersAgentPicker(t *testing.T) {
+	prevNS := noSwitchFlag
+	noSwitchFlag = true
+	t.Cleanup(func() { noSwitchFlag = prevNS })
+
+	repo := t.TempDir()
+	name := "agentful"
+	target := filepath.Join(repo+".worktrees", name)
+	t.Cleanup(func() { os.RemoveAll(repo + ".worktrees") })
+
+	tmock := runner.NewMock()
+	tmock.Set("tmux", []string{"-V"}, "tmux 3.4", "", nil)
+	tmock.Set("tmux", []string{"list-sessions"}, "host: 1 windows", "", nil)
+	tmock.Set("tmux", []string{"new-window", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
+
+	gmock := runner.NewMock()
+	gmock.Set("git", []string{"-C", repo, "worktree", "list", "--porcelain"},
+		"worktree "+repo+"\nHEAD a1\nbranch refs/heads/main\n", "", nil)
+	gmock.Set("git", []string{"-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/" + name}, "", "", nil) // branch exists → checkout
+	gmock.Set("git", []string{"-C", repo, "for-each-ref", "--format=%(refname)", "refs/remotes/"}, "", "", nil)  // no remotes
+	gmock.Set("git", []string{"-C", repo, "worktree", "add", target, name}, "", "", nil)
+	gmock.Set("git", []string{"-C", target, "rev-parse", "--abbrev-ref", "HEAD"}, name, "", nil)
+
+	prevT, prevG := tmux.Runner, git.Runner
+	tmux.Runner, git.Runner = tmock, gmock
+	t.Cleanup(func() { tmux.Runner, git.Runner = prevT, prevG })
+
+	// Agent installed so onboarding reaches the picker; the spy records the offer and
+	// cancels (no launch).
+	prevLook := lookPath
+	lookPath = func(bin string) (string, error) { return "/x/" + bin, nil }
+	t.Cleanup(func() { lookPath = prevLook })
+	offered := false
+	prevPick := pickAgent
+	pickAgent = func(items []tui.AgentItem, def string) (tui.AgentItem, bool, bool, error) {
+		offered = true
+		return tui.AgentItem{}, false, true, nil // cancelled
+	}
+	t.Cleanup(func() { pickAgent = prevPick })
+
+	tempState(t)
+	tempCfg(t)
+	s := &state.State{Version: state.Version, Sessions: []state.Session{{
+		ID: "repo-x", DisplayName: "repo", Root: repo, TmuxName: "repo", Layout: state.LayoutInPlace,
+		Worktrees: []state.Worktree{{Name: "main", Path: repo, TmuxWindowID: "@1"}},
+	}}}
+	if err := saveState(s); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createWorktree("repo", name); err != nil {
+		t.Fatalf("createWorktree = %v, want nil", err)
+	}
+	if !offered {
+		t.Error("createWorktree should offer the agent picker for a freshly created worktree (the `c` flow)")
 	}
 }
 

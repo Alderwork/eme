@@ -582,6 +582,21 @@ func maybeOnboardAgent(s *state.State, sess *state.Session) {
 	}
 }
 
+// maybeOnboardWorktreeAgent offers the agent picker for a freshly created worktree and,
+// on a concrete choice, records it as that worktree's own agent and launches it there —
+// the worktree-per-agent flow, mirroring maybeOnboardAgent for a new project. Best-effort:
+// the worktree already exists, so any failure here is reported to stderr and never fails
+// worktree creation.
+func maybeOnboardWorktreeAgent(s *state.State, sess *state.Session, name string) {
+	w := sess.WorktreeByName(name)
+	if w == nil {
+		return
+	}
+	if err := pickWorktreeAgent(s, sess, w); err != nil {
+		fmt.Fprintln(os.Stderr, "eme: agent setup:", err)
+	}
+}
+
 func createWorktreePrompt(sessionArg, name string) error {
 	if name == "" {
 		input := tui.NewInput("Worktree name")
@@ -779,6 +794,12 @@ func createWorktree(sessionArg, name string) error {
 	} else {
 		fmt.Printf("Created worktree %q in %s\n", name, sess.DisplayName)
 	}
+
+	// Onboard an agent in the fresh worktree, just like a new project — this is the
+	// worktree-per-agent flow the dashboard's `c` relies on. It launches in the worktree's
+	// own window, so it runs regardless of --no-switch; the picker then yields back to the
+	// terminal and the switch (if any) happens after.
+	maybeOnboardWorktreeAgent(s, sess, name)
 
 	maybeSwitchClient(sess.TmuxName, windowID)
 	return nil
