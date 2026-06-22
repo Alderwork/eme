@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"os"
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/jinmu/eme/internal/tui/theme"
@@ -28,8 +31,24 @@ var statusStyle = map[AgentStatus]lipgloss.Style{
 }
 
 // Glyph returns the status dot. The progression ● ◐ ○ · is a fullness ramp that
-// reads with color off; ✗ marks a crash.
+// reads with color off; ✗ marks a crash. Under EME_ASCII it degrades to the DESIGN
+// §6.4 ASCII set so the glyph channel survives a terminal that can't render the
+// Unicode dots.
 func (s AgentStatus) Glyph() string {
+	if asciiGlyphs() {
+		switch s {
+		case StatusWaiting:
+			return "*"
+		case StatusWorking:
+			return "o"
+		case StatusExited:
+			return "."
+		case StatusCrashed:
+			return "x"
+		default:
+			return "·" // idle stays the latin-1 middle dot (§6.4): widely available
+		}
+	}
 	switch s {
 	case StatusWaiting:
 		return "●"
@@ -42,6 +61,14 @@ func (s AgentStatus) Glyph() string {
 	default:
 		return "·"
 	}
+}
+
+// asciiGlyphs reports whether EME_ASCII is set, opting a non-Unicode terminal into the
+// ASCII status glyphs. A tmux popup can't be probed for Unicode capability (the same
+// blind spot as background detection, §3.4), so this is an explicit opt-in — a sibling
+// of EME_THEME / EME_BEACON_COLOR — read fresh so tests and runtime agree.
+func asciiGlyphs() bool {
+	return strings.TrimSpace(os.Getenv("EME_ASCII")) != ""
 }
 
 // Label returns the status word.

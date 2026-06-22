@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -11,6 +12,24 @@ import (
 
 	emeerrors "github.com/jinmu/eme/internal/errors"
 )
+
+// manyViews builds sessions x perSession worktrees with globally-unique names, for the
+// overflow/viewport tests.
+func manyViews(sessions, perSession int) []SessionView {
+	var vs []SessionView
+	for s := range sessions {
+		sid := fmt.Sprintf("proj%d", s)
+		var wts []WorktreeView
+		for w := range perSession {
+			wts = append(wts, WorktreeView{
+				Name: fmt.Sprintf("%s-wt%d", sid, w), Branch: fmt.Sprintf("feat/%d", w),
+				SessionID: sid, IsMain: w == 0, Status: StatusIdle,
+			})
+		}
+		vs = append(vs, SessionView{DisplayName: sid, Root: "/code/" + sid, Worktrees: wts})
+	}
+	return vs
+}
 
 func runeKey(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
 
@@ -617,6 +636,84 @@ func TestDashboardPeekErrorSurfacesNotice(t *testing.T) {
 	}
 }
 
+// TestDashboardPeekClosesWhenPeekedRowVanishesOnTick: an auto-refresh that drops the
+// peeked worktree must close the peek — the cursor falls onto a different row, so a
+// standing peek would mislabel stale output (DESIGN §5.7).
+func TestDashboardPeekClosesWhenPeekedRowVanishesOnTick(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 2 // myapp/feat
+	m.SetPeek(func(id, name string) ([]string, error) { return []string{"stale output"}, nil })
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("precondition: peek open on feat")
+	}
+	// feat disappears on the next status tick.
+	m.SetStatusReload(func() ([]SessionView, error) {
+		return []SessionView{
+			{DisplayName: "myapp", Root: "/code/myapp", Worktrees: []WorktreeView{
+				{Name: "main", SessionID: "myapp", IsMain: true, Status: StatusWorking},
+			}},
+		}, nil
+	})
+	m.tickReload()
+	if m.peeking {
+		t.Error("a tick that drops the peeked worktree must close the peek")
+	}
+}
+
+// TestDashboardPeekSurvivesTickWhenRowUnchanged: a routine tick that keeps the peeked
+// row selected must NOT close the peek — only a cursor move or a vanished row dismisses
+// it, so reading a peek isn't interrupted every 2s.
+func TestDashboardPeekSurvivesTickWhenRowUnchanged(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/main
+	m.SetPeek(func(id, name string) ([]string, error) { return []string{"live"}, nil })
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("precondition: peek open on main")
+	}
+	m.SetStatusReload(func() ([]SessionView, error) { return sampleViews(), nil })
+	m.tickReload()
+	if !m.peeking {
+		t.Error("a tick that keeps the peeked row selected must leave the peek open")
+	}
+}
+
+// TestDashboardPeekClosesAfterChildAction: a child action (refresh path) dismisses the
+// peek — the action may change the pane, so the captured lines are stale.
+func TestDashboardPeekClosesAfterChildAction(t *testing.T) {
+	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
+	m.cursor = 1
+	m.SetPeek(func(id, name string) ([]string, error) { return []string{"before"}, nil })
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("precondition: peek open")
+	}
+	m.refresh(nil) // as if a child action just returned
+	if m.peeking {
+		t.Error("a post-action refresh must close the momentary peek")
+	}
+}
+
+// TestDashboardPeekClosesOnKillStage: staging a kill confirm (d) dismisses the peek so
+// the confirm prompt is not rendered beneath a standing peek panel.
+func TestDashboardPeekClosesOnKillStage(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 2 // myapp/feat
+	m.SetPeek(func(id, name string) ([]string, error) { return []string{"x"}, nil })
+	m.Update(runeKey('p'))
+	if !m.peeking {
+		t.Fatal("precondition: peek open")
+	}
+	m.Update(runeKey('d'))
+	if m.peeking {
+		t.Error("staging a kill should close the peek")
+	}
+	if m.pending == nil {
+		t.Error("d should still stage the kill confirm")
+	}
+}
+
 // TestDashboardCleanKeyRunsChildForDeadPane: `x` on a crashed worktree dispatches
 // the `eme clean` child (which respawns the dead pane and clears the record).
 func TestDashboardCleanKeyRunsChildForDeadPane(t *testing.T) {
@@ -639,6 +736,59 @@ func TestDashboardCleanKeyNoopForLivePane(t *testing.T) {
 	}
 }
 
+// TestPadCellMeasuresDisplayWidth: name/branch cells are padded to an exact DISPLAY
+// width (not byte length), so a CJK/emoji name keeps the status-first column grid
+// aligned instead of shoving later columns right (#3).
+func TestPadCellMeasuresDisplayWidth(t *testing.T) {
+	cases := []struct {
+		in    string
+		width int
+	}{
+		{"main", 14},
+		{"한글워크트리", 14},      // 6 wide runes = 12 cols, fits, padded to 14
+		{"日本語のとても長い名前", 10}, // 22 cols, must truncate to fit 10
+		{"plain-ascii-too-long-to-fit", 16},
+		{"", 8},
+	}
+	for _, c := range cases {
+		if w := lipgloss.Width(padCell(c.in, c.width)); w != c.width {
+			t.Errorf("padCell(%q, %d) display width = %d, want %d", c.in, c.width, w, c.width)
+		}
+	}
+}
+
+// TestDashboardPerRowActionsNoticeOnHeader: the per-worktree actions advertised in the
+// help (p/a/A/x) explain themselves when the cursor is on a session header rather than
+// silently doing nothing (#8).
+func TestDashboardPerRowActionsNoticeOnHeader(t *testing.T) {
+	for _, key := range []rune{'p', 'a', 'A', 'x'} {
+		m := NewDashboard(sampleViews(), nil)
+		m.cursor = 0 // myapp header
+		m.SetPeek(func(string, string) ([]string, error) { return []string{"x"}, nil })
+		m.Update(runeKey(key))
+		if m.notice == "" {
+			t.Errorf("%q on a session header should set an explanatory notice", key)
+		}
+		if m.peeking {
+			t.Errorf("%q on a header should not open a peek", key)
+		}
+	}
+}
+
+// TestDashboardCleanNoticeOnLivePane: x on a running/idle worktree explains the gate
+// instead of doing nothing (#8).
+func TestDashboardCleanNoticeOnLivePane(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/main, StatusWorking
+	_, cmd := m.Update(runeKey('x'))
+	if cmd != nil {
+		t.Error("x on a live pane must not run a child")
+	}
+	if m.notice == "" {
+		t.Error("x on a live pane should explain the gate")
+	}
+}
+
 func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
 	m.refresh(errors.New("kill failed"))
@@ -652,18 +802,65 @@ func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 
 func TestDashboardViewContainsMotifAndStatus(t *testing.T) {
 	v := NewDashboard(sampleViews(), nil).View()
-	for _, want := range []string{"eme", "needs you", "myapp", "running", "crashed", "idle", "◐", "✗"} {
+	for _, want := range []string{"eme", "myapp", "running", "crashed", "idle", "◐", "✗"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View() missing %q\n---\n%s", want, v)
 		}
 	}
-	// One crashed worktree → "1 needs you" (clean exits no longer count).
-	if !strings.Contains(v, "1 needs you") {
-		t.Errorf("View() should show '1 needs you'\n%s", v)
+	// One crashed worktree, zero waiting → the tally reads "1 crashed" (danger), not a
+	// merged amber "needs you" (DESIGN §5.2).
+	if !strings.Contains(v, "1 crashed") {
+		t.Errorf("View() should show '1 crashed'\n%s", v)
+	}
+	if strings.Contains(v, "needs you") {
+		t.Errorf("View() must not use the merged 'needs you' tally\n%s", v)
 	}
 	// The dashboard is wrapped in a rounded-border panel.
 	if !strings.Contains(v, "╭") || !strings.Contains(v, "╰") {
 		t.Errorf("View() should be wrapped in a rounded-border panel\n%s", v)
+	}
+}
+
+// TestDashboardHeaderTallySplitsWaitingAndCrashed: the header counter is two
+// hue-correct segments — the waiting count and the crashed count — never a single
+// merged "needs you" number (DESIGN §5.2: "N waiting" then " · M crashed").
+func TestDashboardHeaderTallySplitsWaitingAndCrashed(t *testing.T) {
+	views := []SessionView{
+		{DisplayName: "app", Root: "/app", Worktrees: []WorktreeView{
+			{Name: "a", SessionID: "app", Status: StatusWaiting},
+			{Name: "b", SessionID: "app", Status: StatusCrashed},
+			{Name: "c", SessionID: "app", Status: StatusWorking},
+		}},
+	}
+	v := NewDashboard(views, nil).View()
+	if !strings.Contains(v, "1 waiting") {
+		t.Errorf("header should show '1 waiting'\n%s", v)
+	}
+	if !strings.Contains(v, "1 crashed") {
+		t.Errorf("header should show '1 crashed'\n%s", v)
+	}
+	if strings.Contains(v, "needs you") {
+		t.Errorf("header must not use the merged 'needs you' tally\n%s", v)
+	}
+}
+
+// TestDashboardHeaderNoBeaconWhenNothingWaits locks the reserved-beacon rule: with
+// crashes but zero waiting, the one amber (beacon) hue must appear NOWHERE — the crash
+// tally is danger, not amber (DESIGN §2 principle 2, §5.2).
+func TestDashboardHeaderNoBeaconWhenNothingWaits(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	defer lipgloss.SetColorProfile(termenv.Ascii)
+
+	views := []SessionView{{DisplayName: "app", Root: "/app", Worktrees: []WorktreeView{
+		{Name: "b", SessionID: "app", Status: StatusCrashed},
+	}}}
+	v := NewDashboard(views, nil).View()
+	// beacon amber (dark) is #E69F00 = rgb(230,159,0); danger is #D55E00 = rgb(213,94,0).
+	if strings.Contains(v, "38;2;230;159;0") {
+		t.Errorf("beacon amber must not appear when nothing is waiting (crash counts in danger)\n%s", v)
+	}
+	if !strings.Contains(v, "38;2;213;94;0") {
+		t.Errorf("a crash should render in danger vermillion\n%s", v)
 	}
 }
 
@@ -682,6 +879,113 @@ func TestDashboardViewMarksFoldedSession(t *testing.T) {
 	}
 	if strings.Contains(v, "feat") {
 		t.Errorf("folded session must hide its worktrees (feat)\n%s", v)
+	}
+}
+
+// TestDashboardViewFitsPopupHeight is the core overflow guard: with far more rows than
+// fit, the rendered panel never grows past the popup — the closing border and the help
+// footer stay on-screen (DESIGN §5.5), and a "more" affordance shows the tree scrolled.
+func TestDashboardViewFitsPopupHeight(t *testing.T) {
+	m := NewDashboard(manyViews(8, 4), nil) // ~47 body lines
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	v := m.View()
+	if h := lipgloss.Height(v); h > 20 {
+		t.Errorf("View height = %d, want <= 20 (must not overflow the popup)\n%s", h, v)
+	}
+	if !strings.Contains(v, "╰") {
+		t.Errorf("closing border must stay on screen\n%s", v)
+	}
+	if !strings.Contains(v, "quit") {
+		t.Errorf("help footer must stay on screen\n%s", v)
+	}
+	if !strings.Contains(v, "more") {
+		t.Errorf("an overflowing tree should show a 'more' affordance\n%s", v)
+	}
+}
+
+// TestDashboardViewNoLineWiderThanPopup: no rendered line exceeds the popup width — a
+// long name/branch/agent label is truncated to its column, never wrapped to a second
+// row that would push the bottom border off-screen (#7, #2).
+func TestDashboardViewNoLineWiderThanPopup(t *testing.T) {
+	views := []SessionView{{DisplayName: "proj", Root: "/code/proj", Worktrees: []WorktreeView{
+		{Name: "a-very-long-worktree-name-that-overflows", Branch: "feature/a-very-long-branch-name-too",
+			SessionID: "proj", IsMain: true, Status: StatusWorking, AgentLabel: "claude-sonnet-with-a-long-suffix"},
+	}}}
+	m := NewDashboard(views, nil)
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+	v := m.View()
+	for _, ln := range strings.Split(v, "\n") {
+		if w := lipgloss.Width(ln); w > 60 {
+			t.Errorf("line width %d exceeds popup width 60: %q", w, ln)
+		}
+	}
+	if h := lipgloss.Height(v); h > 20 {
+		t.Errorf("height %d > 20: a long row must not wrap and push the border off", h)
+	}
+}
+
+// TestDashboardViewKeepsCursorRowVisible: when the cursor sits past the visible window,
+// the windowed tree still includes the cursor's row — the viewport follows the cursor.
+func TestDashboardViewKeepsCursorRowVisible(t *testing.T) {
+	m := NewDashboard(manyViews(8, 4), nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.cursor = len(m.rows) - 1 // last row
+	last := m.rows[m.cursor]
+	wantName := m.views[last.session].Worktrees[last.worktree].Name
+	v := m.View()
+	if !strings.Contains(v, wantName) {
+		t.Errorf("cursor row %q should be visible in the window\n%s", wantName, v)
+	}
+	if h := lipgloss.Height(v); h > 16 {
+		t.Errorf("height %d > 16", h)
+	}
+}
+
+// TestWindowBodyKeepsCursorVisibleAtSmallCapacity: when the body window collapses to 1–2
+// rows (a short popup with the peek open), windowBody must still keep the cursor's row on
+// screen. At that size no "↑/↓ N more" marker can fit, so the marker-negotiation loop finds
+// no arrangement; the fix falls back to a marker-less window centered on the cursor instead
+// of anchoring at the top of the list (which silently scrolled the selected row off-screen).
+func TestWindowBodyKeepsCursorVisibleAtSmallCapacity(t *testing.T) {
+	body := make([]string, 20)
+	for i := range body {
+		body[i] = fmt.Sprintf("row%d", i)
+	}
+	for _, capacity := range []int{1, 2, 3} {
+		for _, cursor := range []int{0, 7, 19} {
+			out := windowBody(body, cursor, capacity)
+			if len(out) > capacity {
+				t.Errorf("cap=%d cursor=%d: len(out)=%d exceeds capacity", capacity, cursor, len(out))
+			}
+			found := false
+			for _, l := range out {
+				if strings.Contains(l, body[cursor]) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("cap=%d cursor=%d: cursor row %q missing from window %v", capacity, cursor, body[cursor], out)
+			}
+		}
+	}
+}
+
+// TestDashboardViewExpandedHelpDoesNotOverflow: pressing ? shows the long help without
+// pushing the border off-screen on a typical-width popup (#4).
+func TestDashboardViewExpandedHelpDoesNotOverflow(t *testing.T) {
+	m := NewDashboard(manyViews(6, 4), nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m.Update(runeKey('?'))
+	v := m.View()
+	if h := lipgloss.Height(v); h > 20 {
+		t.Errorf("expanded help pushed height to %d > 20\n%s", h, v)
+	}
+	if !strings.Contains(v, "peek") { // an expanded-help-only key
+		t.Errorf("expanded help should be visible\n%s", v)
+	}
+	if !strings.Contains(v, "╰") {
+		t.Errorf("closing border must stay on screen with expanded help\n%s", v)
 	}
 }
 

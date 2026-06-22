@@ -120,6 +120,10 @@ type DashboardModel struct {
 	peeking   bool
 	peekLines []string
 	peekLabel string
+	// peekSID is the SessionID of the peeked worktree, kept alongside peekLabel (its
+	// Name) so a reload can tell whether the peek's row is still the selected one —
+	// Name alone is ambiguous across sessions.
+	peekSID string
 }
 
 // NewDashboard creates a dashboard model. reload is called after each child
@@ -270,17 +274,31 @@ func (m *DashboardModel) foldRightOrOpen() tea.Cmd {
 	return tea.Quit
 }
 
-// needsYouCount counts worktrees whose status warrants attention.
-func (m *DashboardModel) needsYouCount() int {
-	n := 0
+// tally builds the header-right counter as two hue-correct segments: the waiting count
+// in beacon and the crashed count in danger, joined by a muted " · " when both fire
+// (DESIGN §5.2 — "the number is the same hue as the dots it counts"). Amber stays
+// reserved for waiting; a crash spends danger, never the beacon. Empty when nothing
+// waits or has crashed — the dark-cockpit ideal (no light = all fine).
+func (m *DashboardModel) tally() string {
+	var waiting, crashed int
 	for si := range m.views {
 		for _, w := range m.views[si].Worktrees {
-			if w.Status.NeedsAttention() {
-				n++
+			switch w.Status {
+			case StatusWaiting:
+				waiting++
+			case StatusCrashed:
+				crashed++
 			}
 		}
 	}
-	return n
+	var parts []string
+	if waiting > 0 {
+		parts = append(parts, needsYouStyle.Render(fmt.Sprintf("%d waiting", waiting)))
+	}
+	if crashed > 0 {
+		parts = append(parts, errorStyle.Render(fmt.Sprintf("%d crashed", crashed)))
+	}
+	return strings.Join(parts, mutedStyle.Render(" · "))
 }
 
 // actionFinishedMsg is delivered after a child `eme` process exits.
@@ -377,18 +395,26 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if args, ok := m.AgentArgs(false); ok {
 				return m, m.runChild(args...)
 			}
+			m.notice = "select a worktree to run an agent (the cursor is on a session)"
 		case "A":
 			if args, ok := m.AgentArgs(true); ok {
 				return m, m.runChild(args...)
 			}
+			m.notice = "select a worktree to run an agent (the cursor is on a session)"
 		case "x":
 			// Clear a finished agent's frozen pane back to idle. Gated to dead-pane
 			// statuses so it never disturbs a live or never-run worktree; `eme clean`
-			// guards again on its own. The refresh after the child shows it idle.
-			if w := m.selected(); w != nil && (w.Status == StatusCrashed || w.Status == StatusExited) {
+			// guards again on its own. The refresh after the child shows it idle. The
+			// gate gives a one-line reason instead of a silent no-op (advertised in help).
+			if w := m.selected(); w == nil {
+				m.notice = "select a finished worktree to clean"
+			} else if w.Status == StatusCrashed || w.Status == StatusExited {
 				return m, m.runChild("clean", w.SessionID, w.Name)
+			} else {
+				m.notice = "x clears a finished agent — " + w.Name + " is " + w.Status.Label()
 			}
 		case "d":
+			m.closePeek() // a confirm prompt replaces the peek; never stack the two
 			if r := m.currentRow(); r != nil && r.kind == rowSession {
 				sv := m.views[r.session]
 				m.pending = &killTarget{sessionID: sessionKey(sv), isMain: true, label: "project " + sv.DisplayName}
@@ -428,7 +454,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model. It renders a single rounded-border panel: a header
-// (branding + rhyme on the left, the "N needs you" counter on the right), a
+// (branding + rhyme on the left, the waiting/crashed tally on the right), a
 // session → worktree tree whose rows lead with agent status, and a footer pinned
 // to the bottom. The worktree under the cursor is a full-width highlight bar.
 func (m *DashboardModel) View() string {
@@ -446,64 +472,164 @@ func (m *DashboardModel) View() string {
 	}
 	innerHeight := height - 2 // minus the top/bottom border rows
 
-	var lines []string
-
-	// Header: branding + rhyme (left), "N needs you" (right), then a rule.
+	// Header (2 rows): branding + rhyme (left), the waiting/crashed tally (right), a rule.
 	left := titleStyle.Render("eme") + "  " + rhymeStyle.Render("eeny · meeny · miny · moe")
-	right := ""
-	if n := m.needsYouCount(); n > 0 {
-		right = needsYouStyle.Render(fmt.Sprintf("%d needs you", n))
-	}
-	lines = append(lines, fitLine(left, right, inner))
-	lines = append(lines, mutedStyle.Render(strings.Repeat("─", inner)))
-
-	// Tree body. Iterate the flattened rows so the fold state and the cursor
-	// highlight read identically on session headers and worktrees.
-	if len(m.rows) == 0 {
-		lines = append(lines, "", mutedStyle.Render("No sessions. Press 'n' to create one."))
-	} else {
-		for i, r := range m.rows {
-			switch r.kind {
-			case rowSession:
-				if i > 0 {
-					lines = append(lines, "") // breathe between sessions
-				}
-				lines = append(lines, m.sessionLine(r.session, i == m.cursor, inner))
-			case rowWorktree:
-				lines = append(lines, m.worktreeLine(m.views[r.session].Worktrees[r.worktree], i == m.cursor, inner))
-			}
-		}
+	header := []string{
+		clampWidth(fitLine(left, m.tally(), inner), inner),
+		clampWidth(mutedStyle.Render(strings.Repeat("─", inner)), inner),
 	}
 
-	// Bottom block: a transient notice/confirm line then the footer, pinned to
-	// the panel's last rows.
+	// Bottom block (peek + notice/confirm + footer), built before the body so the body's
+	// row budget can subtract it. Each entry is wrapped/clamped to a single terminal row so
+	// the height accounting below counts real rows, not logical strings that may soft-wrap.
 	var bottom []string
 	if m.peeking {
-		bottom = append(bottom, m.peekBlock(inner)...)
+		for _, ln := range m.peekBlock(inner) {
+			bottom = append(bottom, clampWidth(ln, inner))
+		}
 	}
 	if m.pending != nil {
 		switch {
 		case m.pending.escalated:
-			bottom = append(bottom, errorStyle.Render("delete "+m.pending.label+" anyway? its history is on no remote — D = delete anyway · f = forget (keep files) · any other key = cancel"))
+			bottom = append(bottom, wrapStyled(errorStyle, "delete "+m.pending.label+" anyway? its history is on no remote — D = delete anyway · f = forget (keep files) · any other key = cancel", inner)...)
 		case m.pending.isMain:
-			bottom = append(bottom, errorStyle.Render("delete "+m.pending.label+"?  y = delete files · f = forget (keep files) · any other key = cancel"))
+			bottom = append(bottom, wrapStyled(errorStyle, "delete "+m.pending.label+"?  y = delete files · f = forget (keep files) · any other key = cancel", inner)...)
 		default:
-			bottom = append(bottom, errorStyle.Render("kill "+m.pending.label+"?  y = confirm · any other key = cancel"))
+			bottom = append(bottom, wrapStyled(errorStyle, "kill "+m.pending.label+"?  y = confirm · any other key = cancel", inner)...)
 		}
 	} else if m.notice != "" {
-		bottom = append(bottom, errorStyle.Render(m.notice))
+		bottom = append(bottom, wrapStyled(errorStyle, m.notice, inner)...)
 	}
+	help := "↑↓/jk move · ←→/hl fold · ↵ open · n new · d kill · ? more · q quit"
 	if m.showHelp {
-		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ←→/hl fold · ↵/o open · p peek · n new · c worktree · a agent · A pick · x clean · d kill · q quit · ?"))
-	} else {
-		bottom = append(bottom, helpStyle.Render("↑↓/jk move · ←→/hl fold · ↵ open · n new · d kill · ? more · q quit"))
+		help = "↑↓/jk move · ←→/hl fold · ↵/o open · p peek · n new · c worktree · a agent · A pick · x clean · d kill · q quit · ?"
 	}
+	bottom = append(bottom, wrapStyled(helpStyle, help, inner)...)
+
+	// Never let the bottom block crowd out the whole tree: keep at least one body row, and
+	// if the block is itself taller than the popup, drop its leading rows (the peek) so the
+	// footer — the last and most load-bearing line — always survives.
+	if maxBottom := innerHeight - len(header) - 1; maxBottom >= 1 && len(bottom) > maxBottom {
+		bottom = bottom[len(bottom)-maxBottom:]
+	}
+
+	// Tree body. Iterate the flattened rows so the fold state and the cursor highlight read
+	// identically on session headers and worktrees; cursorLine records where the selected
+	// row lands so the window can keep it in view.
+	var body []string
+	cursorLine := 0
+	if len(m.rows) == 0 {
+		body = append(body, "", clampWidth(mutedStyle.Render("No sessions. Press 'n' to create one."), inner))
+	} else {
+		for i, r := range m.rows {
+			if r.kind == rowSession && i > 0 {
+				body = append(body, "") // breathe between sessions
+			}
+			if i == m.cursor {
+				cursorLine = len(body)
+			}
+			switch r.kind {
+			case rowSession:
+				body = append(body, clampWidth(m.sessionLine(r.session, i == m.cursor, inner), inner))
+			case rowWorktree:
+				body = append(body, clampWidth(m.worktreeLine(m.views[r.session].Worktrees[r.worktree], i == m.cursor, inner), inner))
+			}
+		}
+	}
+
+	// Window the body to the rows left after the header and bottom block, scrolling to keep
+	// the cursor in view with a "↑/↓ N more" marker on each clipped side. Without this the
+	// panel grows past the popup and tmux clips the closing border and the footer.
+	bodyCap := innerHeight - len(header) - len(bottom)
+	if bodyCap < 1 {
+		bodyCap = 1
+	}
+	body = windowBody(body, cursorLine, bodyCap)
+
+	lines := make([]string, 0, innerHeight)
+	lines = append(lines, header...)
+	lines = append(lines, body...)
 	for len(lines)+len(bottom) < innerHeight {
 		lines = append(lines, "")
 	}
 	lines = append(lines, bottom...)
 
 	return panelStyle.Width(boxWidth).Render(strings.Join(lines, "\n"))
+}
+
+// clampWidth truncates s to at most width display columns, preserving ANSI styling, so a
+// rendered line occupies exactly one terminal row and the height math stays honest.
+func clampWidth(s string, width int) string {
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
+// wrapStyled renders raw text in style, word-wrapped to width, and returns it as
+// individual one-row lines, so a long footer/notice spends a known, counted number of
+// rows instead of silently wrapping past the popup.
+func wrapStyled(style lipgloss.Style, text string, width int) []string {
+	return strings.Split(style.Width(width).Render(text), "\n")
+}
+
+// windowBody returns at most capacity rows from body, centered on the cursor's line, with
+// a muted "↑/↓ N more" marker replacing each clipped end. Every body line is already a
+// single terminal row, so this is a plain line window: the tree scrolls, the panel never
+// outgrows the popup. The cursor's line is always kept inside the visible band.
+func windowBody(body []string, cursorLine, capacity int) []string {
+	if capacity < 1 {
+		capacity = 1
+	}
+	if len(body) <= capacity {
+		return body
+	}
+	// Reserve a marker row only on a side that actually hides content: try two markers,
+	// then one, then none, and use the first arrangement whose reserved count matches what
+	// the clamped window really hides.
+	for markers := 2; markers >= 0; markers-- {
+		content := capacity - markers
+		if content < 1 {
+			continue
+		}
+		start := cursorLine - content/2
+		if start < 0 {
+			start = 0
+		}
+		if start > len(body)-content {
+			start = len(body) - content
+		}
+		end := start + content
+		top, bot := start > 0, end < len(body)
+		used := 0
+		if top {
+			used++
+		}
+		if bot {
+			used++
+		}
+		if used != markers {
+			continue
+		}
+		out := make([]string, 0, capacity)
+		if top {
+			out = append(out, mutedStyle.Render(fmt.Sprintf("↑ %d more", start)))
+		}
+		out = append(out, body[start:end]...)
+		if bot {
+			out = append(out, mutedStyle.Render(fmt.Sprintf("↓ %d more", len(body)-end)))
+		}
+		return out
+	}
+	// No marker arrangement fits — the window is too small (1–2 rows, e.g. a short popup
+	// with the peek open) to spare a row for a "more" hint. Fall back to a marker-less
+	// window centered on the cursor so the selected row stays visible (we lose only the
+	// hint, never the cursor) instead of anchoring at the top and scrolling it off-screen.
+	start := cursorLine - capacity/2
+	if start < 0 {
+		start = 0
+	}
+	if start > len(body)-capacity {
+		start = len(body) - capacity
+	}
+	return body[start : start+capacity]
 }
 
 // fitLine places left at the start and right-aligns right within width columns,
@@ -523,8 +649,8 @@ func fitLine(left, right string, width int) string {
 // attention are separate channels (DESIGN.md §5.3).
 func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) string {
 	statusRaw := fmt.Sprintf("%s %-8s", w.Status.Glyph(), w.Status.Label())
-	nameRaw := fmt.Sprintf("%-14s", truncate(w.Name, 14))
-	branchRaw := fmt.Sprintf("%-16s", truncate(w.Branch, 16))
+	nameRaw := padCell(w.Name, 14)
+	branchRaw := padCell(w.Branch, 16)
 
 	// bg paints the surface lift on the cursor row and is a no-op elsewhere.
 	// Applying it to every cell and gap keeps the platform continuous beneath the
@@ -647,9 +773,47 @@ func truncate(s string, max int) string {
 	return string(r[:max-1]) + "…"
 }
 
+// truncateWidth shortens s to at most max DISPLAY columns (not runes), adding an
+// ellipsis when it must cut — the wide-rune-aware sibling of truncate, so a CJK or emoji
+// string occupies the columns it actually paints.
+func truncateWidth(s string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > max-1 { // reserve one column for the ellipsis
+			break
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return b.String() + "…"
+}
+
+// padCell truncates s to width display columns and pads it to exactly that many columns,
+// measured by display width — a byte-based %-Ns over-pads CJK/emoji and shoves the later
+// columns right, breaking the status-first grid (DESIGN §5.1).
+func padCell(s string, width int) string {
+	s = truncateWidth(s, width)
+	if pad := width - lipgloss.Width(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
+}
+
 // refresh re-reads the view-model after a child action, recording any error as a
 // transient notice. It never quits the dashboard.
 func (m *DashboardModel) refresh(actionErr error) {
+	m.closePeek() // the action may have changed the pane; the captured peek is now stale
 	if actionErr != nil {
 		m.notice = actionErr.Error()
 	} else {
@@ -688,7 +852,11 @@ func (m *DashboardModel) togglePeek() {
 		return
 	}
 	w := m.selected()
-	if w == nil || m.peek == nil {
+	if w == nil {
+		m.notice = "select a worktree to peek (the cursor is on a session)"
+		return
+	}
+	if m.peek == nil {
 		return
 	}
 	lines, err := m.peek(w.SessionID, w.Name)
@@ -699,6 +867,7 @@ func (m *DashboardModel) togglePeek() {
 	m.peeking = true
 	m.peekLines = lines
 	m.peekLabel = w.Name
+	m.peekSID = w.SessionID
 }
 
 // closePeek clears the peek so no rows are spent when not peeking.
@@ -706,6 +875,21 @@ func (m *DashboardModel) closePeek() {
 	m.peeking = false
 	m.peekLines = nil
 	m.peekLabel = ""
+	m.peekSID = ""
+}
+
+// reconcilePeek closes the peek when its worktree is no longer the row under the cursor
+// — the momentary glance must not outlive the selection that opened it (DESIGN §5.7).
+// Called after every reload so an auto-refresh that drops or reorders the peeked row
+// never leaves a stale panel attributed to the wrong worktree. A reload that keeps the
+// same row selected leaves the peek untouched, so reading it isn't interrupted.
+func (m *DashboardModel) reconcilePeek() {
+	if !m.peeking {
+		return
+	}
+	if w := m.selected(); w == nil || w.SessionID != m.peekSID || w.Name != m.peekLabel {
+		m.closePeek()
+	}
 }
 
 // tickReload refreshes agent status from the cheap snapshot path on each tick,
@@ -746,17 +930,22 @@ func (m *DashboardModel) applyViews(views []SessionView) {
 		case rowSession:
 			if wantSession != "" && sessionKey(m.views[r.session]) == wantSession {
 				m.cursor = i
+				m.reconcilePeek()
 				return
 			}
 		case rowWorktree:
 			if wantSID != "" {
 				if w := m.views[r.session].Worktrees[r.worktree]; w.SessionID == wantSID && w.Name == wantName {
 					m.cursor = i
+					m.reconcilePeek()
 					return
 				}
 			}
 		}
 	}
+	// The previously selected row is gone; the cursor fell back to a clamped index, so a
+	// standing peek now points at the wrong worktree (or none) — drop it.
+	m.reconcilePeek()
 }
 
 // carryDiffStats copies the diff columns from src into dst by worktree identity, so
