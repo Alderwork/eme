@@ -147,3 +147,31 @@ func TestBuildSessionViews_MapsFields(t *testing.T) {
 		t.Errorf("feat view wrong: %+v", feat)
 	}
 }
+
+// TestBuildSessionViews_PlainLayoutSetsIsPlain locks the wiring the dashboard's
+// create-worktree gate reads: a LayoutPlain session surfaces IsPlain=true, while a
+// git-backed one (in-place here) stays false.
+func TestBuildSessionViews_PlainLayoutSetsIsPlain(t *testing.T) {
+	git.Runner = runner.NewMock()
+	defer func() { git.Runner = runner.Default }()
+
+	sessions := []state.Session{
+		{
+			ID: "repo", DisplayName: "repo", Root: "/code/repo", Layout: state.LayoutInPlace,
+			Worktrees: []state.Worktree{{Name: "main", TmuxWindowID: "@1"}},
+		},
+		{
+			ID: "docs", DisplayName: "docs", Root: "/notes/docs", Layout: state.LayoutPlain,
+			Worktrees: []state.Worktree{{Name: "main", TmuxWindowID: "@2"}},
+		},
+	}
+	snap := map[string]tmux.PaneInfo{"@1": {Command: "zsh"}, "@2": {Command: "zsh"}}
+
+	views := buildSessionViews(sessions, snap)
+	if views[0].IsPlain {
+		t.Errorf("in-place repo should not be plain: %+v", views[0])
+	}
+	if !views[1].IsPlain {
+		t.Errorf("plain folder should set IsPlain: %+v", views[1])
+	}
+}

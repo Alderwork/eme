@@ -15,7 +15,8 @@ import (
 )
 
 var (
-	killDryRun bool
+	killDryRun        bool
+	killForceUnpushed bool
 )
 
 var killCmd = &cobra.Command{
@@ -24,6 +25,7 @@ var killCmd = &cobra.Command{
 	Args:  cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		force, _ := cmd.Flags().GetBool("force")
+		force = resolveForce(force, killForceUnpushed)
 		if !force && !killDryRun {
 			return errors.New(errors.CodeCommandFailed,
 				"kill requires --force to confirm removal.",
@@ -54,11 +56,16 @@ var killCmd = &cobra.Command{
 		}
 
 		if len(args) == 1 {
-			return killSession(s, sess)
+			return killSession(s, sess, killForceUnpushed)
 		}
 		return killWorktree(s, sess, args[1], force)
 	},
 }
+
+// resolveForce folds --force-unpushed into the general --force gate: the louder override
+// (which also discards the only copy of unpushed history) necessarily confirms the
+// ordinary removal too, so `eme kill <proj> --force-unpushed` need not also pass --force.
+func resolveForce(force, forceUnpushed bool) bool { return force || forceUnpushed }
 
 // pathsToDeleteForKill returns the on-disk paths that killing the whole session
 // removes. For in-place layouts the adopted clone root is NEVER included.
@@ -92,7 +99,30 @@ func pathsToDeleteForKill(sess *state.Session) []string {
 	return append(paths, filepath.Join(sess.Root, "main"), filepath.Join(sess.Root, ".bare"))
 }
 
-func killSession(s *state.State, sess *state.Session) error {
+// unpushedHistoryGuard refuses to delete a nested-bare project whose .bare holds
+// commits reachable from no remote — the only copy of that history dies with the
+// folder. Other layouts are exempt: in-place keeps its .git (commits survive in the
+// clone root), and plain created no git history at all. The check is best-effort —
+// if git can't answer, it fails open rather than wedge the user's ability to delete.
+// --force-unpushed bypasses it.
+func unpushedHistoryGuard(sess *state.Session, forceUnpushed bool) error {
+	if forceUnpushed || sess.Layout != state.LayoutNestedBare {
+		return nil
+	}
+	n, err := git.UnpushedCommitCount(sess.GitDir()) // nested-bare → <root>/.bare
+	if err != nil || n == 0 {
+		return nil
+	}
+	return errors.New(errors.CodeUnpushedHistory,
+		fmt.Sprintf("%q has %d commit(s) that exist on no remote.", sess.DisplayName, n),
+		"Deleting this project removes its .bare repository — the only copy of that history.",
+		fmt.Sprintf("Push the branch(es) to a remote first, or run `eme kill %s --force-unpushed` to delete anyway.", sess.DisplayName))
+}
+
+func killSession(s *state.State, sess *state.Session, forceUnpushed bool) error {
+	if err := unpushedHistoryGuard(sess, forceUnpushed); err != nil {
+		return err
+	}
 	for _, p := range pathsToDeleteForKill(sess) {
 		if err := os.RemoveAll(p); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not remove %s: %v\n", p, err)
@@ -155,5 +185,6 @@ func killWorktree(s *state.State, sess *state.Session, name string, force bool) 
 
 func init() {
 	killCmd.Flags().BoolP("force", "f", false, "confirm destructive removal")
+	killCmd.Flags().BoolVar(&killForceUnpushed, "force-unpushed", false, "also delete a nested-bare project whose history is on no remote (implies --force)")
 	killCmd.Flags().BoolVar(&killDryRun, "dry-run", false, "print planned actions without executing")
 }

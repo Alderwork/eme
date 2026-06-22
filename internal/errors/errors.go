@@ -31,6 +31,7 @@ const (
 	CodeMainProtected         = "main_protected"
 	CodeParentRepo            = "parent_repo"
 	CodeInProgressOp          = "in_progress_op"
+	CodeUnpushedHistory       = "unpushed_history"
 )
 
 // EmeError is a structured error with a problem, cause, and suggested fix.
@@ -88,6 +89,25 @@ func As(err error) *EmeError {
 		return e
 	}
 	return nil
+}
+
+// ExitUnpushedHistory is the process exit code carried by a CodeUnpushedHistory
+// refusal. It is distinct from the generic exit 1 so a parent process — notably the
+// dashboard, which runs `eme kill` as a child — can recognize "refused: history is on
+// no remote" without parsing stderr, and offer the --force-unpushed escape hatch in the
+// UI instead of surfacing a dead-end error.
+const ExitUnpushedHistory = 10
+
+// ExitCode maps an error to a process exit code: 0 for success, ExitUnpushedHistory for
+// the unpushed-history refusal, and 1 for everything else.
+func ExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	if e := As(err); e != nil && e.Code == CodeUnpushedHistory {
+		return ExitUnpushedHistory
+	}
+	return 1
 }
 
 // FromCommand wraps an exec error with a code and human-readable prefix.

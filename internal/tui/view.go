@@ -90,5 +90,9 @@ type WorktreeView struct {
 type SessionView struct {
 	DisplayName string
 	Root        string
-	Worktrees   []WorktreeView
+	// IsPlain marks a plain (non-git) project: the folder is run in place with no
+	// git worktree management. The dashboard gates the create-worktree action on
+	// it so a plain folder never spawns a child that can only fail.
+	IsPlain   bool
+	Worktrees []WorktreeView
 }

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/jinmu/eme/internal/errors"
 	"github.com/jinmu/eme/internal/tui/theme"
 )
 
@@ -71,6 +72,11 @@ type killTarget struct {
 	worktreeName string
 	label        string
 	isMain       bool
+	// escalated marks the second-stage project confirm shown after a plain delete was
+	// refused because the project's history is on no remote. It swaps the affirmative
+	// key to D (delete anyway → --force-unpushed) so the louder option only ever appears
+	// when the guard actually fired.
+	escalated bool
 }
 
 // DashboardModel is the main dashboard.
@@ -86,7 +92,11 @@ type DashboardModel struct {
 	height    int
 	notice    string
 	pending   *killTarget
-	showHelp  bool
+	// lastDelete records the project a plain delete was just dispatched for, so an
+	// unpushed-history refusal coming back from the child can be turned into the
+	// escalated "delete anyway" confirm instead of a dead-end error notice.
+	lastDelete *killTarget
+	showHelp   bool
 	// leaving records that the user chose to switch (Enter) to leaveSession/
 	// leaveWorktree. When true, the model has quit and the cmd layer execs
 	// `eme switch` afterward, once bubbletea has restored the terminal. An
@@ -300,13 +310,17 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pending != nil {
 			t := m.pending
 			m.pending = nil
-			if msg.String() == "y" {
-				if t.isMain {
-					return m, m.runChild("kill", t.sessionID, "--force")
-				}
-				return m, m.runChild("kill", t.sessionID, t.worktreeName, "--force")
+			args, ok := confirmArgs(t, msg.String())
+			if !ok {
+				return m, nil
 			}
-			return m, nil
+			// A plain project delete (y, not the escalated D) may bounce back refused
+			// because the history is on no remote; remember the target so the child's
+			// exit can be turned into the escalated confirm rather than a dead end.
+			if t.isMain && !t.escalated && args[0] == "kill" {
+				m.lastDelete = t
+			}
+			return m, m.runChild(args...)
 		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
@@ -349,7 +363,14 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.runChild("new", "--no-switch")
 		case "c":
 			// Create a worktree in the session under the cursor (header or worktree).
+			// A plain (non-git) folder has no git worktrees, so gate the action here:
+			// give a one-line reason instead of spawning a child that can only fail.
 			if si := m.selectedSession(); si >= 0 {
+				if m.views[si].IsPlain {
+					m.notice = m.views[si].DisplayName + " is a plain folder — no git worktrees (run `git init` to enable)."
+					return m, nil
+				}
+				m.notice = ""
 				return m, m.runChild("new", "--worktree", sessionKey(m.views[si]), "--no-switch")
 			}
 		case "a":
@@ -387,6 +408,17 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case actionFinishedMsg:
+		// A just-dispatched plain delete that bounced back with the unpushed-history
+		// exit code becomes a second, louder confirm (D = delete anyway) rather than a
+		// dead-end "exit status 10" notice — the only in-UI path to the override.
+		if d := m.lastDelete; d != nil {
+			m.lastDelete = nil
+			if isUnpushedExit(msg.err) {
+				m.pending = &killTarget{sessionID: d.sessionID, label: d.label, isMain: true, escalated: true}
+				m.notice = ""
+				return m, nil
+			}
+		}
 		m.refresh(msg.err)
 	case tickMsg:
 		m.tickReload()
@@ -450,7 +482,14 @@ func (m *DashboardModel) View() string {
 		bottom = append(bottom, m.peekBlock(inner)...)
 	}
 	if m.pending != nil {
-		bottom = append(bottom, errorStyle.Render("kill "+m.pending.label+"?  y = confirm · any other key = cancel"))
+		switch {
+		case m.pending.escalated:
+			bottom = append(bottom, errorStyle.Render("delete "+m.pending.label+" anyway? its history is on no remote — D = delete anyway · f = forget (keep files) · any other key = cancel"))
+		case m.pending.isMain:
+			bottom = append(bottom, errorStyle.Render("delete "+m.pending.label+"?  y = delete files · f = forget (keep files) · any other key = cancel"))
+		default:
+			bottom = append(bottom, errorStyle.Render("kill "+m.pending.label+"?  y = confirm · any other key = cancel"))
+		}
 	} else if m.notice != "" {
 		bottom = append(bottom, errorStyle.Render(m.notice))
 	}
@@ -753,6 +792,49 @@ func (m *DashboardModel) AgentArgs(pick bool) ([]string, bool) {
 		args = append(args, "--pick")
 	}
 	return args, true
+}
+
+// confirmArgs maps a staged confirm plus the pressed key to the child `eme` args to
+// run, or ok=false to cancel. It is the pure decision behind the confirm prompt, split
+// out so the EXACT argv (not merely "a command ran") is unit-testable — a regression
+// that swapped forget for kill on the keep-files key would otherwise pass silently.
+func confirmArgs(t *killTarget, key string) ([]string, bool) {
+	switch {
+	case t.escalated:
+		// Second-stage project confirm: history is on no remote. D forces the delete;
+		// f still forgets (keeps files). The affirmative is D, not y, so a reflexive y
+		// from the first prompt does not blow past the louder warning.
+		switch key {
+		case "D":
+			return []string{"kill", t.sessionID, "--force-unpushed"}, true
+		case "f":
+			return []string{"forget", t.sessionID}, true
+		}
+	case t.isMain:
+		// Project: y deletes the files, f forgets it. Anything else cancels.
+		switch key {
+		case "y":
+			return []string{"kill", t.sessionID, "--force"}, true
+		case "f":
+			return []string{"forget", t.sessionID}, true
+		}
+	default:
+		// Worktree: y confirms removal.
+		if key == "y" {
+			return []string{"kill", t.sessionID, t.worktreeName, "--force"}, true
+		}
+	}
+	return nil, false
+}
+
+// isUnpushedExit reports whether a child `eme` process exited with the unpushed-history
+// refusal code. It reads ExitCode() structurally (via the interface *exec.ExitError
+// satisfies) so the dashboard need not parse stderr to recognize the guard firing.
+func isUnpushedExit(err error) bool {
+	if ec, ok := err.(interface{ ExitCode() int }); ok {
+		return ec.ExitCode() == errors.ExitUnpushedHistory
+	}
+	return false
 }
 
 // runChild runs `eme <args...>` as a child process, pausing the dashboard and

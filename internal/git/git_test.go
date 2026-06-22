@@ -75,6 +75,50 @@ func TestWorktreeAddAt_FallsBackToErrWhenNoStderr(t *testing.T) {
 	}
 }
 
+// TestUnpushedCommitCount parses the rev-list count of local-only commits — the
+// "history that would be lost on delete" signal for a nested-bare project.
+func TestUnpushedCommitCount(t *testing.T) {
+	args := []string{"-C", "/proj/.bare", "rev-list", "--all", "--not", "--remotes", "--count"}
+
+	t.Run("counts local-only commits", func(t *testing.T) {
+		mock := runner.NewMock()
+		mock.Set("git", args, "3\n", "", nil)
+		Runner = mock
+		defer func() { Runner = runner.Default }()
+
+		n, err := UnpushedCommitCount("/proj/.bare")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if n != 3 {
+			t.Errorf("count = %d, want 3", n)
+		}
+	})
+
+	t.Run("fully pushed reports zero", func(t *testing.T) {
+		mock := runner.NewMock()
+		mock.Set("git", args, "0\n", "", nil)
+		Runner = mock
+		defer func() { Runner = runner.Default }()
+
+		n, err := UnpushedCommitCount("/proj/.bare")
+		if err != nil || n != 0 {
+			t.Errorf("n=%d err=%v, want 0, nil", n, err)
+		}
+	})
+
+	t.Run("git error propagates", func(t *testing.T) {
+		mock := runner.NewMock()
+		mock.Set("git", args, "", "fatal: bad repo", fmt.Errorf("exit status 128"))
+		Runner = mock
+		defer func() { Runner = runner.Default }()
+
+		if _, err := UnpushedCommitCount("/proj/.bare"); err == nil {
+			t.Error("expected error to propagate")
+		}
+	})
+}
+
 func TestBranchDFConflict(t *testing.T) {
 	cases := []struct {
 		desc       string

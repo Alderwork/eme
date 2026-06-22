@@ -8,6 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	emeerrors "github.com/jinmu/eme/internal/errors"
 )
 
 func runeKey(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
@@ -44,6 +46,10 @@ func TestDashboardFlattenAndCursorClamp(t *testing.T) {
 	}
 }
 
+// Deleting a project stages a confirm offering two outcomes: y deletes the files,
+// f forgets it (keeps files). y confirms here; TestDashboardKillContext_MainForget
+// covers f, and TestDashboardKillContext_MainCancel covers dismissal. The destructive
+// action stays on y so a stray double-d (the old muscle memory) still cancels.
 func TestDashboardKillContext_MainKillsSession(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
 	m.cursor = 1 // myapp/main (IsMain)
@@ -51,12 +57,134 @@ func TestDashboardKillContext_MainKillsSession(t *testing.T) {
 	if m.pending == nil || !m.pending.isMain || m.pending.sessionID != "myapp" {
 		t.Fatalf("pending = %+v, want isMain session kill of myapp", m.pending)
 	}
-	_, cmd := m.Update(runeKey('y'))
+	_, cmd := m.Update(runeKey('y')) // y = delete files
 	if cmd == nil {
-		t.Error("confirming kill should return a command")
+		t.Error("confirming delete should return a command")
 	}
 	if m.pending != nil {
 		t.Error("pending should clear after confirm")
+	}
+}
+
+// A stray double-d must NOT delete: after staging with d, a second d cancels.
+func TestDashboardKillContext_DoubleDCancels(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1
+	m.Update(runeKey('d'))           // stage
+	_, cmd := m.Update(runeKey('d')) // second d = cancel, not delete
+	if cmd != nil || m.pending != nil {
+		t.Error("double-d must cancel, not delete")
+	}
+}
+
+// f on a staged project confirm forgets it (removes from eme, keeps files on disk)
+// rather than deleting — the disk-safe outcome surfaced in the UI.
+func TestDashboardKillContext_MainForget(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/main (IsMain)
+	m.Update(runeKey('d'))
+	_, cmd := m.Update(runeKey('f'))
+	if cmd == nil {
+		t.Error("forget should return a command")
+	}
+	if m.pending != nil {
+		t.Error("pending should clear after forget")
+	}
+}
+
+// Any key other than d/f cancels a staged project confirm without acting.
+func TestDashboardKillContext_MainCancel(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1
+	m.Update(runeKey('d'))
+	_, cmd := m.Update(runeKey('n'))
+	if cmd != nil || m.pending != nil {
+		t.Error("cancel should clear pending and return no command")
+	}
+}
+
+// confirmArgs is the pure decision behind every confirm prompt; assert the EXACT argv
+// so a regression that, say, swapped forget for kill on the keep-files key can't slip
+// through a "cmd != nil" check.
+func TestDashboardConfirmArgs(t *testing.T) {
+	proj := &killTarget{sessionID: "app", isMain: true, label: "project app"}
+	wt := &killTarget{sessionID: "app", worktreeName: "feat", label: "worktree feat"}
+	esc := &killTarget{sessionID: "app", isMain: true, escalated: true, label: "project app"}
+	cases := []struct {
+		name string
+		t    *killTarget
+		key  string
+		want string // space-joined argv; "" means ok=false (cancel)
+	}{
+		{"project y deletes files", proj, "y", "kill app --force"},
+		{"project f forgets", proj, "f", "forget app"},
+		{"project D is inert before escalation", proj, "D", ""},
+		{"project other cancels", proj, "n", ""},
+		{"worktree y kills", wt, "y", "kill app feat --force"},
+		{"worktree f cancels", wt, "f", ""},
+		{"escalated D forces past the guard", esc, "D", "kill app --force-unpushed"},
+		{"escalated f still forgets", esc, "f", "forget app"},
+		{"escalated y does NOT blow through", esc, "y", ""},
+	}
+	for _, c := range cases {
+		args, ok := confirmArgs(c.t, c.key)
+		got := ""
+		if ok {
+			got = strings.Join(args, " ")
+		}
+		if got != c.want {
+			t.Errorf("%s: confirmArgs(%q) = (%v, %v) → %q, want %q", c.name, c.key, args, ok, got, c.want)
+		}
+	}
+}
+
+// fakeExit is an error carrying an ExitCode, mimicking *exec.ExitError so the escalation
+// path can be driven without spawning a real child.
+type fakeExit int
+
+func (f fakeExit) Error() string { return "exit" }
+func (f fakeExit) ExitCode() int { return int(f) }
+
+// A plain project delete refused for unpushed history escalates to a second confirm
+// whose D runs --force-unpushed — the only in-UI path to the override — and clears the
+// pending tracker once consumed.
+func TestDashboardEscalatesOnUnpushedExit(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/main (IsMain)
+	m.Update(runeKey('d'))
+	m.Update(runeKey('y')) // dispatch the plain delete; records lastDelete
+	if m.lastDelete == nil {
+		t.Fatal("y on a project should record lastDelete for possible escalation")
+	}
+	m.Update(actionFinishedMsg{err: fakeExit(emeerrors.ExitUnpushedHistory)})
+	if m.pending == nil || !m.pending.escalated || m.pending.sessionID != "myapp" {
+		t.Fatalf("pending = %+v, want an escalated confirm for myapp", m.pending)
+	}
+	if m.lastDelete != nil {
+		t.Error("lastDelete should clear once consumed")
+	}
+	_, cmd := m.Update(runeKey('D'))
+	if cmd == nil {
+		t.Error("D on the escalated confirm should run the force-unpushed delete")
+	}
+	if m.pending != nil {
+		t.Error("pending should clear after the escalated choice")
+	}
+}
+
+// A generic child failure (not the unpushed code) surfaces as a notice, never an
+// escalated confirm — escalation is reserved for the guard firing.
+func TestDashboardGenericFailureDoesNotEscalate(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1
+	m.Update(runeKey('d'))
+	m.Update(runeKey('y'))
+	m.Update(actionFinishedMsg{err: fakeExit(1)})
+	if m.pending != nil {
+		t.Errorf("a generic failure must not escalate, pending = %+v", m.pending)
+	}
+	if m.notice != "exit" {
+		t.Errorf("notice = %q, want the failure surfaced", m.notice)
 	}
 }
 
@@ -70,6 +198,40 @@ func TestDashboardKillContext_WorktreeKill(t *testing.T) {
 	_, cmd := m.Update(runeKey('n')) // cancel
 	if cmd != nil || m.pending != nil {
 		t.Error("cancel should clear pending and return no command")
+	}
+}
+
+// TestDashboardCreateWorktreeGatedOnPlain: c spawns the create-worktree child on a
+// git-backed session, but on a plain (non-git) folder it is gated in the UI — no
+// child runs and a one-line notice explains why, instead of failing at runtime.
+func TestDashboardCreateWorktreeGatedOnPlain(t *testing.T) {
+	views := []SessionView{
+		{DisplayName: "repo", Root: "/code/repo", Worktrees: []WorktreeView{
+			{Name: "main", Branch: "main", SessionID: "repo", IsMain: true, Status: StatusIdle},
+		}},
+		{DisplayName: "docs", Root: "/notes/docs", IsPlain: true, Worktrees: []WorktreeView{
+			{Name: "main", SessionID: "docs", IsMain: true, Status: StatusIdle},
+		}},
+	}
+	// rows: 0 header repo, 1 repo/main, 2 header docs, 3 docs/main
+	m := NewDashboard(views, nil)
+
+	m.cursor = 1 // repo/main → git-backed
+	_, cmd := m.Update(runeKey('c'))
+	if cmd == nil {
+		t.Error("c on a git session should run the create-worktree child")
+	}
+	if m.notice != "" {
+		t.Errorf("notice = %q, want empty on a git session", m.notice)
+	}
+
+	m.cursor = 3 // docs/main → plain
+	_, cmd = m.Update(runeKey('c'))
+	if cmd != nil {
+		t.Error("c on a plain folder must not run a child")
+	}
+	if !strings.Contains(m.notice, "plain folder") {
+		t.Errorf("notice = %q, want a plain-folder explanation", m.notice)
 	}
 }
 

@@ -198,6 +198,25 @@ func DeleteBranch(repoDir, name string) error {
 	return err
 }
 
+// UnpushedCommitCount returns how many commits reachable from ANY local ref are NOT
+// reachable from a remote-tracking ref — history that exists ONLY in this repository.
+// --all spans branches, tags, stash and HEAD (not just branch tips), so a commit held
+// only by a tag or a detached HEAD still counts; --not --remotes subtracts everything a
+// remote already has. A repo with no remotes therefore reports all of its history
+// (nothing is "pushed"), so the count doubles as a "deleting this discards the only
+// copy" signal. gitDir may be a bare repo (e.g. a nested-bare project's .bare).
+func UnpushedCommitCount(gitDir string) (int, error) {
+	out, _, err := Run(context.Background(), gitDir, "rev-list", "--all", "--not", "--remotes", "--count")
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("parse rev-list count %q: %w", out, err)
+	}
+	return n, nil
+}
+
 // WorktreePrune drops administrative entries for worktrees whose directories are gone,
 // so a failed-then-retried creation does not leave a stale registration behind.
 func WorktreePrune(repoDir string) error {
