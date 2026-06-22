@@ -64,19 +64,19 @@ func (m *AgentPickerModel) Init() tea.Cmd { return nil }
 func (m *AgentPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		switch msg.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
+		switch msg.String() {
+		case "ctrl+c", "esc":
 			m.cancelled = true
 			return m, tea.Quit
-		case tea.KeyEnter:
+		case "enter":
 			if m.cursor >= 0 && m.cursor < len(m.items) && m.items[m.cursor].Installed {
 				m.selected = m.items[m.cursor]
 				m.chose = true
 				return m, tea.Quit
 			}
-		case tea.KeyUp:
+		case "up", "k":
 			m.move(-1)
-		case tea.KeyDown:
+		case "down", "j":
 			m.move(1)
 		}
 	case error:
@@ -121,7 +121,7 @@ func (m *AgentPickerModel) View() string {
 			b += fmt.Sprintf("%s%s\n", prefix, mutedStyle.Render(it.Name+" (install to use)"))
 		}
 	}
-	b += "\n" + helpStyle.Render("enter to select, esc to cancel, ↑/↓ to move")
+	b += "\n" + helpStyle.Render("enter to select, esc to cancel, ↑/↓/j/k to move")
 	return b
 }
 

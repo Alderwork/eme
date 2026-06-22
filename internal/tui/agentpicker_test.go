@@ -72,6 +72,22 @@ func TestNewAgentPicker_DefaultHighlightSkipsUninstalled(t *testing.T) {
 	}
 }
 
+// TestAgentPicker_JKNavigates: j/k move the cursor like ↓/↑ (skipping uninstalled
+// rows), matching the dashboard's vim-style navigation.
+func TestAgentPicker_JKNavigates(t *testing.T) {
+	m := NewAgentPicker(sampleItems(), "claude") // cursor on claude (index 0)
+	model, _ := m.Update(runeKey('j'))           // down, skipping uninstalled codex → opencode
+	m = model.(*AgentPickerModel)
+	if got := m.items[m.cursor].Name; got != "opencode" {
+		t.Fatalf("after j, cursor on %q, want opencode", got)
+	}
+	model, _ = m.Update(runeKey('k')) // up → back to claude
+	m = model.(*AgentPickerModel)
+	if got := m.items[m.cursor].Name; got != "claude" {
+		t.Fatalf("after k, cursor on %q, want claude", got)
+	}
+}
+
 func TestAgentPicker_UpAtTopIsNoop(t *testing.T) {
 	m := NewAgentPicker(sampleItems(), "claude") // cursor on claude (index 0)
 	m = key(m, tea.KeyUp)                        // already at top → no-op
