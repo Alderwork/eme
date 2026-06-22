@@ -4,7 +4,7 @@
 
 **Mission control for your AI coding agents.** Which agent needs you? eme counts them out.
 
-`eme` runs each AI coding agent in its own git worktree as a real tmux session, and shows you — across every worktree — which one is `waiting-for-input`, which is still `working`, and which has `exited`. All without leaving the terminal.
+`eme` runs each AI coding agent in its own git worktree as a real tmux session, and shows you — across every worktree — which one is `waiting-for-input`, which is still `working`, and which is back at an `idle` prompt. All without leaving the terminal.
 
 ## Install
 
@@ -69,6 +69,7 @@ eme clean <id>     # reset a crashed/exited worktree's pane to idle
 eme agent <id>     # start/stop/toggle agent
 eme agent <id> --pick  # choose the worktree's agent from the catalog
 eme status --tmux  # ambient status-bar segment (✗N when agents crash)
+eme hooks install  # let the agent push precise status to eme (Claude Code; opt-in)
 eme doctor         # verify environment
 eme --version      # print version
 ```
@@ -100,7 +101,7 @@ When you run `eme new`, eme shows an agent picker (claude, codex, gemini, openco
 
 ## Why eme?
 
-- **Mission control for parallel agents**: one dashboard shows every agent as `idle`, `working`, `waiting-for-input`, or `exited` — jump to the one that needs you.
+- **Mission control for parallel agents**: one dashboard shows every agent as `idle`, `working`, or `waiting-for-input` — jump to the one that needs you.
 - **Native to your tmux**: agents run in your real tmux sessions and windows (full compat, vim-modal, popup) — not a hidden tmux a TUI owns, not an Electron app.
 - **git worktree-native**: each agent gets an isolated worktree and its own tmux window. `folder = project = tmux session`, no registration step.
 - **Stays out of your way**: no diff/merge/approval GUI — review stays in your editor and git.

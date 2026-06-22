@@ -7,8 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Adopt a plain (non-git) folder in place. Picking a folder that already has
+  content but is not a git repo — e.g. a multi-repo parent directory you want to
+  drive a top-level agent in — now registers it as a `plain` project and runs the
+  agent in the folder directly, instead of scaffolding a nested-bare layout
+  (`.bare` + an empty `main/`) into it (which left the existing content orphaned).
+  Only a truly empty folder still gets the nested-bare scaffold. A plain project
+  is a single window at its root; reconcile keeps it on the strength of the
+  directory + tmux window alone (no git), and worktree creation refuses with a
+  clear message (it needs git). `eme doctor <folder>` reports which action a
+  non-git folder would take (scaffold vs adopt-in-place).
+- Agent state sync via hooks. `eme hooks install` wires Claude Code's lifecycle
+  hooks (`UserPromptSubmit`/`Notification`/`Stop`) to stamp the agent's real state
+  into a tmux pane option (`@eme_state`), which eme reads in its existing pane
+  snapshot — so the dashboard distinguishes `working` from `waiting-for-input` from
+  `idle` precisely, instead of only guessing from the foreground process. The install
+  is opt-in, merge-safe (it preserves every other key and any foreign hooks, e.g. a
+  SessionEnd hook from another tool), idempotent, backs up your settings, and writes
+  atomically. `eme hooks uninstall` removes only eme's hooks. Agents without the hooks
+  installed are unaffected (they keep the foreground heuristic). A shell prompt always
+  wins as `idle`, so a stale `@eme_state` left by a crashed agent never misleads.
+
+### Changed
+
+- Creating a worktree now does the right thing when the name matches an existing
+  branch instead of refusing. If `<name>` is an existing branch, eme checks it out
+  into the new worktree (a local branch, or a remote branch it tracks via git's DWIM)
+  rather than failing on "branch already exists". If that branch is already checked
+  out in a worktree eme manages, it switches you there instead of erroring. On a
+  directory/file name conflict (e.g. `feat` when `feat/x` branches exist), the error
+  lists the real `feat/*` branches you can type to check one out. A brand-new name
+  still creates a new branch as before.
+- Agents now run as a **child of the pane's shell** (a bare command) instead of
+  replacing the shell via `exec`. Quitting an agent (Ctrl-C / exit) returns to a
+  live shell prompt in the same pane instead of leaving a frozen "Pane is dead"
+  screen. Agent liveness and the dashboard status now read the pane's foreground
+  process (`pane_current_command`): a shell prompt is `idle`, anything else is
+  `working`. As a result `exited`/`crashed` statuses now occur only for a pane the
+  user manually kills/exits; an agent that quits reads `idle`.
+
 ### Fixed
 
+- Worktree creation now reports git's actual failure instead of a bare
+  `exit status 255`: `git worktree add`'s stderr (e.g. `cannot lock ref
+  'refs/heads/feat': 'refs/heads/feat/design-polish' exists`) is surfaced in the
+  error details. eme also pre-checks directory/file branch-ref conflicts — a name
+  like `feat` when `feat/x` branches already exist (or `feat/x` when `feat` is a
+  branch) — and refuses with an actionable message naming the conflicting branch,
+  before touching git.
 - Reconcile no longer prunes (and persists) sessions when the tmux server is
   unreachable. Opening the dashboard while the server was down used to treat
   every session as dead and wipe it from state. This was the root cause of
