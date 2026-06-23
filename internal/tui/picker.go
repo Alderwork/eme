@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // FolderPickerModel is a fuzzy folder picker that can also create a new folder:
@@ -177,22 +178,35 @@ func (m *FolderPickerModel) resolveCreatePath(q string) string {
 	return filepath.Clean(q)
 }
 
-// View implements tea.Model.
+// View implements tea.Model. Standalone it centers the dialog box in the terminal;
+// embedded in the dashboard the caller draws Box() and composites it over the live tree.
 func (m *FolderPickerModel) View() string {
+	box := m.Box()
+	if m.width <= 0 || m.height <= 0 {
+		return box
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// Box renders the picker as a bordered dialog without centering, for the dashboard overlay.
+func (m *FolderPickerModel) Box() string {
+	return dialogStyle.Render(m.content())
+}
+
+// content builds the picker's inner text: title, filter field, the windowed folder list,
+// and the help line.
+func (m *FolderPickerModel) content() string {
 	if m.err != nil {
-		return errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err))
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 	var b string
 	b += titleStyle.Render("Select project folder") + "\n\n"
 	b += m.input.View() + "\n\n"
 	n := m.rowCount()
 	if n == 0 {
-		b += mutedStyle.Render("No matching folders. Type a new path to create one.\n")
+		b += mutedStyle.Render("No matching folders. Type a new path to create one.") + "\n"
 	} else {
-		pageSize := m.height - 6
-		if pageSize < 1 {
-			pageSize = n
-		}
+		pageSize := m.pageSize()
 		start := 0
 		if m.cursor >= pageSize {
 			start = m.cursor - pageSize + 1
@@ -207,6 +221,22 @@ func (m *FolderPickerModel) View() string {
 	}
 	b += "\n" + helpStyle.Render("enter to select/create · esc to cancel · ↑/↓ to move")
 	return b
+}
+
+// pageSize is how many folder rows the modal shows at once: a bounded window so the dialog
+// stays modal-sized (not full-screen) and scrolls when the list is longer.
+func (m *FolderPickerModel) pageSize() int {
+	const maxRows = 12
+	size := maxRows
+	if m.height > 0 {
+		if fit := m.height - 10; fit < size { // leave room for border, title, field, help
+			size = fit
+		}
+	}
+	if size < 1 {
+		size = 1
+	}
+	return size
 }
 
 // renderRow renders the i-th selectable row: a filtered folder, or the synthetic

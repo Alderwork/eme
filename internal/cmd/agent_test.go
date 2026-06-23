@@ -186,6 +186,111 @@ func TestAgentPickFlagRegistered(t *testing.T) {
 	if agentCmd.Flags().Lookup("pick") == nil {
 		t.Errorf("--pick flag not registered on agentCmd")
 	}
+	if agentCmd.Flags().Lookup("set") == nil {
+		t.Errorf("--set flag not registered on agentCmd")
+	}
+	if newCmd.Flags().Lookup("agent") == nil {
+		t.Errorf("--agent flag not registered on newCmd")
+	}
+}
+
+// TestSetWorktreeAgent_RecordsAndLaunches is the non-interactive `A`/`--set` path: the
+// dashboard picks the agent in its own modal, then passes the choice here, which records the
+// override and launches it without a picker.
+func TestSetWorktreeAgent_RecordsAndLaunches(t *testing.T) {
+	tempCfg(t)
+	tempState(t)
+	stubWhich(t, "claude")
+	stubAgentRunning(t, false, nil)
+	var target, line string
+	captureSendKeys(t, &target, &line)
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp", DisplayName: "myapp"}
+	w := &state.Worktree{Name: "feat", Path: "/p/feat", TmuxWindowID: "@2"}
+
+	if err := setWorktreeAgent(s, sess, w, "claude"); err != nil {
+		t.Fatalf("setWorktreeAgent: %v", err)
+	}
+	if w.AgentCommandOverride != "claude" {
+		t.Errorf("override = %q, want claude", w.AgentCommandOverride)
+	}
+	if line != "claude" {
+		t.Errorf("launched line = %q, want claude", line)
+	}
+}
+
+// TestSetWorktreeAgent_NoneLeavesBareShell verifies the "none" choice records nothing and
+// launches nothing — the modal's "— none —" row leaving a bare shell.
+func TestSetWorktreeAgent_NoneLeavesBareShell(t *testing.T) {
+	tempCfg(t)
+	tempState(t)
+	stubAgentRunning(t, false, nil)
+	var target, line string
+	captureSendKeys(t, &target, &line)
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp"}
+	w := &state.Worktree{Name: "feat", TmuxWindowID: "@2"}
+
+	if err := setWorktreeAgent(s, sess, w, "none"); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if w.AgentCommandOverride != "" {
+		t.Errorf("none must not record an override, got %q", w.AgentCommandOverride)
+	}
+	if line != "" {
+		t.Errorf("none must not launch, sent %q", line)
+	}
+}
+
+// TestSetWorktreeAgent_NoneLeavesExistingOverrideUntouched locks the agreed "none" semantics:
+// picking the picker's "— none —" row LEAVES a pre-existing agent untouched and launches
+// nothing — exactly mirroring the interactive flow (chooseAndLaunchAgent: "none, cancel, or
+// an empty catalog leave everything untouched"). It deliberately does NOT clear the override:
+// clearing would fall back to the session/global default agent (resolvedAgentCommand), not a
+// bare shell, and would diverge the modal `A` flow from the interactive one.
+func TestSetWorktreeAgent_NoneLeavesExistingOverrideUntouched(t *testing.T) {
+	tempCfg(t)
+	tempState(t)
+	stubAgentRunning(t, false, nil)
+	var target, line string
+	captureSendKeys(t, &target, &line)
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp"}
+	w := &state.Worktree{Name: "feat", TmuxWindowID: "@2", AgentCommandOverride: "codex"}
+
+	if err := setWorktreeAgent(s, sess, w, "none"); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if w.AgentCommandOverride != "codex" {
+		t.Errorf("none must leave the existing override untouched, got %q", w.AgentCommandOverride)
+	}
+	if line != "" {
+		t.Errorf("none must not launch, sent %q", line)
+	}
+}
+
+// TestSetWorktreeAgent_RefusesWhenRunning guards that the non-interactive set still refuses
+// to type a command into a live agent's pane, exactly like the interactive pick.
+func TestSetWorktreeAgent_RefusesWhenRunning(t *testing.T) {
+	tempCfg(t)
+	tempState(t)
+	stubAgentRunning(t, true, nil) // an agent is live
+	var target, line string
+	captureSendKeys(t, &target, &line)
+
+	s := &state.State{Version: state.Version}
+	sess := &state.Session{TmuxName: "myapp"}
+	w := &state.Worktree{Name: "feat", TmuxWindowID: "@2"}
+
+	if err := setWorktreeAgent(s, sess, w, "claude"); err == nil {
+		t.Fatal("setWorktreeAgent must refuse while an agent is running")
+	}
+	if line != "" {
+		t.Errorf("must not launch when refusing, sent %q", line)
+	}
 }
 
 func TestLaunchAgentCommand_SendsBareCommand(t *testing.T) {

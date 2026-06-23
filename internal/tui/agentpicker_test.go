@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,6 +19,20 @@ func sampleItems() []AgentItem {
 func key(m *AgentPickerModel, t tea.KeyType) *AgentPickerModel {
 	model, _ := m.Update(tea.KeyMsg{Type: t})
 	return model.(*AgentPickerModel)
+}
+
+// TestAgentPicker_BoxBeforeWindowSize guards that the dashboard can render the picker's box
+// the instant it opens it — before any WindowSizeMsg (sizeAndInit skips sizing when the
+// terminal size is still 0). content() must not depend on width/height.
+func TestAgentPicker_BoxBeforeWindowSize(t *testing.T) {
+	m := NewAgentPicker(sampleItems(), "claude") // no WindowSizeMsg yet
+	box := m.Box()
+	if !strings.Contains(box, "Pick an agent") {
+		t.Errorf("Box() before sizing should still render the title; got %q", box)
+	}
+	if !strings.Contains(box, "╭") {
+		t.Error("Box() should render the rounded border even before sizing")
+	}
 }
 
 func TestAgentPicker_EnterSelectsInstalled(t *testing.T) {
@@ -95,5 +110,40 @@ func TestAgentPicker_UpAtTopIsNoop(t *testing.T) {
 	sel, ok := m.Chosen()
 	if !ok || sel.Name != "claude" {
 		t.Fatalf("Up at top then Enter = %+v, %v; want claude, true", sel, ok)
+	}
+}
+
+// TestAgentPicker_ViewIsBorderedBox verifies the picker renders inside a bordered
+// dialog frame (the modal), not as a bare top-left list. The rounded-border corners
+// mirror the dashboard's panel so the modal reads as the same chrome.
+func TestAgentPicker_ViewIsBorderedBox(t *testing.T) {
+	m := NewAgentPicker(sampleItems(), "claude")
+	view := m.View()
+	if !strings.Contains(view, "Pick an agent") {
+		t.Fatalf("view missing title:\n%s", view)
+	}
+	if !strings.ContainsAny(view, "╭╮╰╯") {
+		t.Fatalf("view is not wrapped in a bordered box:\n%s", view)
+	}
+}
+
+// TestAgentPicker_ViewCentersWithinWindow verifies that once the picker learns the
+// terminal size (WindowSizeMsg) it centers the dialog — blank padding above the box
+// and filling the full height — so it reads as a modal in the middle, not pinned to
+// the top-left corner.
+func TestAgentPicker_ViewCentersWithinWindow(t *testing.T) {
+	m := NewAgentPicker(sampleItems(), "claude")
+	model, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = model.(*AgentPickerModel)
+	view := m.View()
+	lines := strings.Split(view, "\n")
+	if len(lines) < 24 {
+		t.Fatalf("centered view should fill the window height (24 lines), got %d:\n%s", len(lines), view)
+	}
+	if strings.TrimSpace(lines[0]) != "" {
+		t.Fatalf("expected blank top padding for vertical centering, got %q", lines[0])
+	}
+	if !strings.Contains(view, "Pick an agent") {
+		t.Fatalf("centered view lost its content:\n%s", view)
 	}
 }

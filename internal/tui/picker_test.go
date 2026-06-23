@@ -2,10 +2,24 @@ package tui
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+// TestFolderPicker_BoxIsBordered verifies the folder picker renders inside the rounded
+// dialog frame so the dashboard can overlay it as a modal like the other pickers.
+func TestFolderPicker_BoxIsBordered(t *testing.T) {
+	m := NewFolderPicker([]string{"/a/one", "/b/two"})
+	box := m.Box()
+	if !strings.Contains(box, "Select project folder") {
+		t.Fatalf("box missing title:\n%s", box)
+	}
+	if !strings.ContainsAny(box, "╭╮╰╯") {
+		t.Fatalf("folder picker box is not bordered:\n%s", box)
+	}
+}
 
 func typeInto(m *FolderPickerModel, s string) *FolderPickerModel {
 	for _, c := range s {

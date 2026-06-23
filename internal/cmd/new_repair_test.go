@@ -118,7 +118,7 @@ func TestEnsureMainWindow_CreatesWhenNoMainWindow(t *testing.T) {
 	mock := runner.NewMock()
 	mock.Set("tmux", []string{"has-session", "-t", "proj"}, "", "", nil)
 	mock.Set("tmux", []string{"list-windows", "-t", "proj", "-F", windowListFormat}, "@8\tother", "", nil)
-	mock.Set("tmux", []string{"new-window", "-t", "proj:", "-P", "-F", "#{window_id}", "-n", "main", "-c", "/x/proj/main"}, "@9", "", nil)
+	mock.Set("tmux", []string{"new-window", "-d", "-t", "proj:", "-P", "-F", "#{window_id}", "-n", "main", "-c", "/x/proj/main"}, "@9", "", nil)
 	prev := tmux.Runner
 	tmux.Runner = mock
 	t.Cleanup(func() { tmux.Runner = prev })

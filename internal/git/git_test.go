@@ -204,6 +204,7 @@ func TestBranchCheckedOutAt(t *testing.T) {
 	out := "worktree /repo\nHEAD a1\nbranch refs/heads/main\n\n" +
 		"worktree /repo.worktrees/feat\nHEAD b2\nbranch refs/heads/feat/foo\n\n"
 	mock.Set("git", []string{"-C", "/repo", "worktree", "list", "--porcelain"}, out, "", nil)
+	mock.Set("git", []string{"-C", "/repo", "config", "--get", "core.ignorecase"}, "false", "", nil)
 	Runner = mock
 	defer func() { Runner = runner.Default }()
 	if p, ok := BranchCheckedOutAt("/repo", "feat/foo"); !ok || p != "/repo.worktrees/feat" {
@@ -214,6 +215,57 @@ func TestBranchCheckedOutAt(t *testing.T) {
 	}
 	if _, ok := BranchCheckedOutAt("/repo", "not-out"); ok {
 		t.Error("a branch in no worktree must report not-checked-out")
+	}
+	// Case-sensitive filesystem: a case-mismatched name is a genuinely different branch.
+	if _, ok := BranchCheckedOutAt("/repo", "Main"); ok {
+		t.Error("with core.ignorecase=false, 'Main' must not match 'main'")
+	}
+}
+
+// TestBranchCheckedOutAt_FoldsCaseWhenIgnoreCase guards the detection gap behind the
+// "existing branch fails to create" bug: on a case-insensitive filesystem git resolves
+// refs case-insensitively, so BranchExists (an FS-backed show-ref) sees "Feat-A" as the
+// stored "feat-a", but BranchCheckedOutAt compared names byte-for-byte and missed it —
+// letting createWorktree fall through to `git worktree add`, which then fails with a raw
+// "already used by worktree". When core.ignorecase is set, the comparison must fold too.
+func TestBranchCheckedOutAt_FoldsCaseWhenIgnoreCase(t *testing.T) {
+	mock := runner.NewMock()
+	out := "worktree /repo\nHEAD a1\nbranch refs/heads/main\n\n" +
+		"worktree /repo.worktrees/feat-a\nHEAD b2\nbranch refs/heads/feat-a\n\n"
+	mock.Set("git", []string{"-C", "/repo", "worktree", "list", "--porcelain"}, out, "", nil)
+	mock.Set("git", []string{"-C", "/repo", "config", "--get", "core.ignorecase"}, "true", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+
+	if p, ok := BranchCheckedOutAt("/repo", "Feat-A"); !ok || p != "/repo.worktrees/feat-a" {
+		t.Errorf("BranchCheckedOutAt(Feat-A) with ignorecase = (%q, %v), want (/repo.worktrees/feat-a, true)", p, ok)
+	}
+	// An exact match still wins without consulting the (folded) fallback.
+	if p, ok := BranchCheckedOutAt("/repo", "feat-a"); !ok || p != "/repo.worktrees/feat-a" {
+		t.Errorf("BranchCheckedOutAt(feat-a) = (%q, %v), want (/repo.worktrees/feat-a, true)", p, ok)
+	}
+}
+
+// TestBranchCheckedOutAt_IgnoresPrunable guards the "existing branch fails to create"
+// bug: a worktree whose directory was deleted out from under git leaves a *prunable*
+// admin entry that still names its branch. That entry is NOT a live checkout, so it must
+// not be reported as one — otherwise createWorktree refuses to reuse the branch ("already
+// checked out at <gone path>") instead of pruning the dead entry and checking it back out.
+func TestBranchCheckedOutAt_IgnoresPrunable(t *testing.T) {
+	mock := runner.NewMock()
+	out := "worktree /repo\nHEAD a1\nbranch refs/heads/main\n\n" +
+		"worktree /repo.worktrees/hi\nHEAD b2\nbranch refs/heads/hi\nprunable gitdir file points to non-existent location\n\n"
+	mock.Set("git", []string{"-C", "/repo", "worktree", "list", "--porcelain"}, out, "", nil)
+	mock.Set("git", []string{"-C", "/repo", "config", "--get", "core.ignorecase"}, "false", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+
+	if p, ok := BranchCheckedOutAt("/repo", "hi"); ok {
+		t.Errorf("BranchCheckedOutAt(hi) on a prunable worktree = (%q, %v), want ('', false)", p, ok)
+	}
+	// The live worktree is still reported.
+	if _, ok := BranchCheckedOutAt("/repo", "main"); !ok {
+		t.Error("a live worktree must still report checked-out")
 	}
 }
 

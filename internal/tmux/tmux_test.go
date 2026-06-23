@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/jinmu/eme/internal/runner"
@@ -161,6 +162,37 @@ func TestSwitchClient_UsesSwitchClientNotSelectWindow(t *testing.T) {
 		if got.Args[i] != want[i] {
 			t.Fatalf("arg %d: got %q want %q", i, got.Args[i], want[i])
 		}
+	}
+}
+
+// TestNewWindow_CreatesDetached guards that NewWindow passes -d so creating a
+// worktree's window never steals the attached client's focus to the new (empty)
+// window. Without -d, tmux makes the new window current and the client jumps to it
+// the instant it is created — before createWorktree's agent picker runs — so the
+// picker ends up in a now-backgrounded pane the user can neither see nor drive.
+// eme moves the client deliberately afterward (maybeSwitchClient/switchToSession),
+// mirroring NewSession, which is likewise detached.
+func TestNewWindow_CreatesDetached(t *testing.T) {
+	oldRunner, oldSocket := Runner, Socket
+	mock := runner.NewMock()
+	Runner, Socket = mock, ""
+	defer func() { Runner, Socket = oldRunner, oldSocket }()
+
+	want := []string{"new-window", "-d", "-t", "proj:", "-P", "-F", "#{window_id}", "-n", "feat", "-c", "/x/proj/feat"}
+	mock.Set("tmux", want, "@9", "", nil)
+
+	id, err := NewWindow("proj", "feat", "/x/proj/feat")
+	if err != nil {
+		t.Fatalf("NewWindow returned error: %v", err)
+	}
+	if id != "@9" {
+		t.Fatalf("window id: got %q want @9", id)
+	}
+	if len(mock.Calls) != 1 {
+		t.Fatalf("expected 1 tmux call, got %d: %+v", len(mock.Calls), mock.Calls)
+	}
+	if got := mock.Calls[0].Args; !slices.Contains(got, "-d") {
+		t.Fatalf("NewWindow must pass -d so it never steals client focus; got args %v", got)
 	}
 }
 

@@ -210,7 +210,7 @@ func TestCreateWorktree_ChecksOutExistingBranch(t *testing.T) {
 	tmock := runner.NewMock()
 	tmock.Set("tmux", []string{"-V"}, "tmux 3.4", "", nil)
 	tmock.Set("tmux", []string{"list-sessions"}, "host: 1 windows", "", nil)
-	tmock.Set("tmux", []string{"new-window", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
+	tmock.Set("tmux", []string{"new-window", "-d", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
 
 	gmock := runner.NewMock()
 	gmock.Set("git", []string{"-C", repo, "worktree", "list", "--porcelain"},
@@ -261,6 +261,81 @@ func TestCreateWorktree_ChecksOutExistingBranch(t *testing.T) {
 	}
 }
 
+// TestCreateWorktree_PrunesStaleAdminAndReusesBranch is the regression for the user-
+// reported failure: a worktree directory deleted out from under git leaves a *prunable*
+// admin entry that still claims branch "hi". Re-creating "hi" must prune that dead entry
+// and check the branch back out (reuse), not refuse with "branch hi is already checked out
+// at <gone path>".
+func TestCreateWorktree_PrunesStaleAdminAndReusesBranch(t *testing.T) {
+	prevNS := noSwitchFlag
+	noSwitchFlag = true
+	t.Cleanup(func() { noSwitchFlag = prevNS })
+
+	repo := t.TempDir()
+	name := "hi"
+	target := filepath.Join(repo+".worktrees", name)
+	t.Cleanup(func() { os.RemoveAll(repo + ".worktrees") })
+
+	tmock := runner.NewMock()
+	tmock.Set("tmux", []string{"-V"}, "tmux 3.4", "", nil)
+	tmock.Set("tmux", []string{"list-sessions"}, "host: 1 windows", "", nil)
+	tmock.Set("tmux", []string{"new-window", "-d", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
+
+	gmock := runner.NewMock()
+	gmock.Set("git", []string{"-C", repo, "worktree", "prune"}, "", "", nil)
+	// The stale entry: .worktrees/hi was deleted, so git lists it as prunable.
+	gmock.Set("git", []string{"-C", repo, "worktree", "list", "--porcelain"},
+		"worktree "+repo+"\nHEAD a1\nbranch refs/heads/main\n\n"+
+			"worktree "+target+"\nHEAD b2\nbranch refs/heads/hi\nprunable gitdir file points to non-existent location\n", "", nil)
+	gmock.Set("git", []string{"-C", repo, "config", "--get", "core.ignorecase"}, "false", "", nil)
+	gmock.Set("git", []string{"-C", repo, "show-ref", "--verify", "--quiet", "refs/heads/" + name}, "", "", nil) // branch hi still exists
+	gmock.Set("git", []string{"-C", repo, "for-each-ref", "--format=%(refname)", "refs/remotes/"}, "", "", nil)
+	// reuse: checkout form (no -b).
+	gmock.Set("git", []string{"-C", repo, "worktree", "add", target, name}, "", "", nil)
+	gmock.Set("git", []string{"-C", target, "rev-parse", "--abbrev-ref", "HEAD"}, name, "", nil)
+
+	prevT, prevG := tmux.Runner, git.Runner
+	tmux.Runner, git.Runner = tmock, gmock
+	t.Cleanup(func() { tmux.Runner, git.Runner = prevT, prevG })
+
+	tempState(t)
+	s := &state.State{Version: state.Version, Sessions: []state.Session{{
+		ID: "repo-x", DisplayName: "repo", Root: repo, TmuxName: "repo", Layout: state.LayoutInPlace,
+		Worktrees: []state.Worktree{{Name: "main", Path: repo, TmuxWindowID: "@1"}},
+	}}}
+	if err := saveState(s); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := createWorktree("repo", name); err != nil {
+		t.Fatalf("re-creating a name whose worktree was deleted should prune + reuse the branch, got %v", err)
+	}
+	// Prune ran, and the branch was checked out (no -b), not refused.
+	var sawPrune, sawCheckout bool
+	for _, c := range gmock.Calls {
+		if len(c.Args) >= 4 && c.Args[2] == "worktree" && c.Args[3] == "prune" {
+			sawPrune = true
+		}
+		if len(c.Args) >= 4 && c.Args[2] == "worktree" && c.Args[3] == "add" {
+			for _, a := range c.Args {
+				if a == "-b" {
+					t.Errorf("must reuse the existing branch, not recreate with -b: %v", c.Args)
+				}
+			}
+			sawCheckout = true
+		}
+	}
+	if !sawPrune {
+		t.Error("createWorktree must prune stale worktree admin before the branch checks")
+	}
+	if !sawCheckout {
+		t.Errorf("expected `git worktree add %s %s`, calls=%v", target, name, gmock.Calls)
+	}
+	if reloaded, _ := loadState(); reloaded.Sessions[0].WorktreeByName(name) == nil {
+		t.Errorf("reused worktree %q was not registered", name)
+	}
+}
+
 // TestCreateWorktree_OffersAgentPicker is the regression for the dashboard `c` flow: a
 // freshly created worktree must offer the agent picker (worktree-per-agent), exactly as a
 // new project does. The bug was that createWorktree finished at a bare shell and never
@@ -279,7 +354,7 @@ func TestCreateWorktree_OffersAgentPicker(t *testing.T) {
 	tmock := runner.NewMock()
 	tmock.Set("tmux", []string{"-V"}, "tmux 3.4", "", nil)
 	tmock.Set("tmux", []string{"list-sessions"}, "host: 1 windows", "", nil)
-	tmock.Set("tmux", []string{"new-window", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
+	tmock.Set("tmux", []string{"new-window", "-d", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target}, "@9", "", nil)
 
 	gmock := runner.NewMock()
 	gmock.Set("git", []string{"-C", repo, "worktree", "list", "--porcelain"},
@@ -417,7 +492,7 @@ func TestCreateWorktree_CleanupDeletesNewBranchOnWindowFailure(t *testing.T) {
 	tmock := runner.NewMock()
 	tmock.Set("tmux", []string{"-V"}, "tmux 3.4", "", nil)
 	tmock.Set("tmux", []string{"list-sessions"}, "host: 1 windows", "", nil)
-	tmock.Set("tmux", []string{"new-window", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target},
+	tmock.Set("tmux", []string{"new-window", "-d", "-t", "repo:", "-P", "-F", "#{window_id}", "-n", name, "-c", target},
 		"", "boom", fmt.Errorf("exit 1")) // window creation FAILS
 
 	gmock := runner.NewMock()

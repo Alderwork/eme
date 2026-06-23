@@ -232,9 +232,30 @@ func BranchCheckedOutAt(repoDir, name string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
+	// A prunable entry is a dead worktree (its directory was removed out from under git),
+	// not a live checkout — skip it, so a leftover .worktrees/<name> admin entry never
+	// masquerades as holding its branch. createWorktree prunes such entries and reuses the
+	// branch; reporting them here would refuse that instead.
+	live := func(e WorktreeEntry) bool { return e.Branch != "" && !e.Prunable }
+
+	// Exact match first — the common case, and the only correct one on a
+	// case-sensitive filesystem where "Feat" and "feat" are distinct branches.
 	for _, e := range entries {
-		if e.Branch == name {
+		if live(e) && e.Branch == name {
 			return e.Path, true
+		}
+	}
+	// On a case-insensitive filesystem (core.ignorecase, e.g. macOS default) git resolves
+	// refs case-insensitively, so a name differing only in case still collides. BranchExists
+	// is an FS-backed show-ref and already sees it; fold here too so the two checks agree and
+	// createWorktree switches/refuses cleanly instead of falling through to a raw git fatal
+	// ("'<branch>' is already used by worktree at …"). Only consulted when no exact match,
+	// so the extra config read costs nothing on the hot path.
+	if ignoreCase(repoDir) {
+		for _, e := range entries {
+			if live(e) && strings.EqualFold(e.Branch, name) {
+				return e.Path, true
+			}
 		}
 	}
 	return "", false

@@ -272,7 +272,7 @@ func TestDashboardRefreshRebuildsRows(t *testing.T) {
 		}}}, nil
 	})
 	m.cursor = 4
-	m.refresh(nil)
+	m.refresh(nil, "")
 	// 1 header + 1 worktree.
 	if len(m.rows) != 2 {
 		t.Fatalf("rows = %d, want 2 after refresh", len(m.rows))
@@ -291,7 +291,7 @@ func TestDashboardRefreshReloadErrorKeepsLastKnown(t *testing.T) {
 		return nil, errors.New("snapshot read failed")
 	})
 	rowsBefore := len(m.rows)
-	m.refresh(nil)
+	m.refresh(nil, "")
 	if len(m.rows) != rowsBefore {
 		t.Errorf("rows = %d, want %d preserved on reload error (F1 guardrail)", len(m.rows), rowsBefore)
 	}
@@ -689,7 +689,7 @@ func TestDashboardPeekClosesAfterChildAction(t *testing.T) {
 	if !m.peeking {
 		t.Fatal("precondition: peek open")
 	}
-	m.refresh(nil) // as if a child action just returned
+	m.refresh(nil, "") // as if a child action just returned
 	if m.peeking {
 		t.Error("a post-action refresh must close the momentary peek")
 	}
@@ -791,7 +791,7 @@ func TestDashboardCleanNoticeOnLivePane(t *testing.T) {
 
 func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 	m := NewDashboard(sampleViews(), func() ([]SessionView, error) { return sampleViews(), nil })
-	m.refresh(errors.New("kill failed"))
+	m.refresh(errors.New("kill failed"), "")
 	if m.notice != "kill failed" {
 		t.Errorf("notice = %q, want the action error", m.notice)
 	}

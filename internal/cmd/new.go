@@ -24,6 +24,7 @@ var (
 	newDryRun       bool
 	convertFlag     bool
 	noSwitchFlag    bool
+	newAgentFlag    string
 )
 
 var newCmd = &cobra.Command{
@@ -31,6 +32,7 @@ var newCmd = &cobra.Command{
 	Short: "Create a new project session + main worktree",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		setAgentChoiceFromFlag(cmd)
 		if worktreeSession != "" {
 			name := ""
 			if len(args) == 1 {
@@ -72,6 +74,7 @@ func init() {
 	newCmd.Flags().BoolVar(&newDryRun, "dry-run", false, "print planned actions without executing")
 	newCmd.Flags().BoolVar(&convertFlag, "convert", false, "restructure an existing clone into a nested-bare layout (backs up first)")
 	newCmd.Flags().BoolVar(&noSwitchFlag, "no-switch", false, "do not switch the tmux client after creating (used by the dashboard)")
+	newCmd.Flags().StringVar(&newAgentFlag, "agent", "", `agent command to launch non-interactively ("none" for a bare shell); omit for the interactive picker`)
 }
 
 // maybeSwitchClient switches the tmux client to the given window, unless
@@ -575,9 +578,14 @@ func maybeOnboardAgent(s *state.State, sess *state.Session) {
 	if w == nil {
 		return
 	}
-	if err := chooseAndLaunchAgent(s, sess, w, sess.AgentCommand, func(command string) {
-		sess.AgentCommand = command
-	}); err != nil {
+	record := func(command string) { sess.AgentCommand = command }
+	var err error
+	if agentChoice != nil {
+		err = onboardAgentNonInteractive(s, sess, w, *agentChoice, record)
+	} else {
+		err = chooseAndLaunchAgent(s, sess, w, sess.AgentCommand, record)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "eme: agent setup:", err)
 	}
 }
@@ -592,7 +600,15 @@ func maybeOnboardWorktreeAgent(s *state.State, sess *state.Session, name string)
 	if w == nil {
 		return
 	}
-	if err := pickWorktreeAgent(s, sess, w); err != nil {
+	var err error
+	if agentChoice != nil {
+		err = onboardAgentNonInteractive(s, sess, w, *agentChoice, func(command string) {
+			w.AgentCommandOverride = command
+		})
+	} else {
+		err = pickWorktreeAgent(s, sess, w)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "eme: agent setup:", err)
 	}
 }
@@ -659,6 +675,13 @@ func createWorktree(sessionArg, name string) error {
 	}
 
 	mainPath := sess.MainPath()
+
+	// Clear stale worktree admin entries before any check. A worktree directory removed out
+	// from under git (e.g. deleted by hand, or an interrupted clean) leaves a prunable entry
+	// that still claims its branch; without pruning, reusing that name hits a raw "'<branch>'
+	// is already used by worktree at <gone path>" from git. Best-effort: a healthy repo has
+	// nothing to prune and this no-ops.
+	_ = git.WorktreePrune(mainPath)
 
 	// If eme already manages a worktree by this name, take the user there instead of
 	// refusing or duplicating. Match by NAME first (it is stable even if the worktree

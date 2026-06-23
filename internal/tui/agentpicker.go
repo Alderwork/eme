@@ -4,7 +4,18 @@ import (
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/jinmu/eme/internal/tui/theme"
 )
+
+// dialogStyle frames the picker as a centered modal — the same rounded border in the
+// quiet `border` hue the dashboard's panel uses (DESIGN.md §"rounded-border panel"),
+// so the picker reads as the same chrome rather than a bare full-screen list.
+var dialogStyle = lipgloss.NewStyle().
+	Border(lipgloss.RoundedBorder()).
+	BorderForeground(theme.Border).
+	Padding(0, 1)
 
 // AgentItem is one row in the agent picker. Installed rows are selectable;
 // uninstalled rows render dimmed and are skipped by navigation and Enter. The
@@ -16,7 +27,8 @@ type AgentItem struct {
 	None      bool
 }
 
-// AgentPickerModel is a small cursor list over an agent catalog.
+// AgentPickerModel is a small cursor list over an agent catalog. width/height track
+// the terminal size (from tea.WindowSizeMsg) so View can center the dialog as a modal.
 type AgentPickerModel struct {
 	items     []AgentItem
 	cursor    int
@@ -24,6 +36,8 @@ type AgentPickerModel struct {
 	chose     bool
 	selected  AgentItem
 	err       error
+	width     int
+	height    int
 }
 
 // NewAgentPicker creates a picker. The cursor starts on the row whose Name
@@ -63,6 +77,8 @@ func (m *AgentPickerModel) Init() tea.Cmd { return nil }
 // Update implements tea.Model.
 func (m *AgentPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
@@ -101,10 +117,28 @@ func (m *AgentPickerModel) move(dir int) {
 	}
 }
 
-// View implements tea.Model.
+// View implements tea.Model. Standalone (its own tea.Program) the picker centers its
+// dialog box in the terminal; embedded in the dashboard the caller draws Box() instead and
+// composites it over the live tree. Before the first WindowSizeMsg it returns the bare box,
+// which tea paints at the top-left until the size arrives.
 func (m *AgentPickerModel) View() string {
+	box := m.Box()
+	if m.width <= 0 || m.height <= 0 {
+		return box
+	}
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// Box renders the picker as a bordered dialog without centering, so the dashboard can
+// overlay it on the live tree (overlayCenter handles placement).
+func (m *AgentPickerModel) Box() string {
+	return dialogStyle.Render(m.content())
+}
+
+// content builds the picker's inner text (title, rows, help) — or an error line.
+func (m *AgentPickerModel) content() string {
 	if m.err != nil {
-		return errorStyle.Render(fmt.Sprintf("Error: %v\n", m.err))
+		return errorStyle.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 	b := titleStyle.Render("Pick an agent") + "\n\n"
 	for i, it := range m.items {

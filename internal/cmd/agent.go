@@ -23,7 +23,54 @@ import (
 var (
 	agentDryRun bool
 	agentPick   bool
+	agentSet    string
 )
+
+// agentChoice, when non-nil, is a preselected agent command set by `eme new --agent` (or
+// "none"/"" for a bare shell). It makes worktree/project onboarding non-interactive: the
+// dashboard presents the picker itself as an in-place modal and passes the result here, so
+// no child process takes over the terminal. nil means "show the interactive picker".
+var agentChoice *string
+
+// setAgentChoiceFromFlag captures the `eme new --agent` flag into agentChoice as a pointer,
+// so "unset" (interactive) stays distinct from an explicit "" / "none" (bare shell).
+func setAgentChoiceFromFlag(cmd *cobra.Command) {
+	if cmd.Flags().Changed("agent") {
+		v := newAgentFlag
+		agentChoice = &v
+		return
+	}
+	agentChoice = nil
+}
+
+// onboardAgentNonInteractive records choice as w's agent and launches it, skipping the
+// picker. A blank or "none" choice leaves a bare shell (nothing recorded, nothing launched).
+func onboardAgentNonInteractive(s *state.State, sess *state.Session, w *state.Worktree, choice string, record func(command string)) error {
+	choice = strings.TrimSpace(choice)
+	if choice == "" || strings.EqualFold(choice, "none") {
+		return nil
+	}
+	record(choice)
+	if err := saveState(s); err != nil {
+		return err
+	}
+	return launchAgentCommand(s, sess, w, choice)
+}
+
+// setWorktreeAgent records command as w's agent override and launches it non-interactively —
+// the dashboard's `A` flow after its own in-place picker. Like the interactive pick it
+// refuses while an agent is live, so the command is never typed into a running agent's pane.
+func setWorktreeAgent(s *state.State, sess *state.Session, w *state.Worktree, command string) error {
+	if running, err := agentRunningFn(w); err == nil && running {
+		return errors.New(errors.CodeCommandFailed,
+			"An agent is already running in this worktree.",
+			"Choosing a new agent would type into the running one.",
+			"Stop it first (press a), then choose a new one.")
+	}
+	return onboardAgentNonInteractive(s, sess, w, command, func(cmd string) {
+		w.AgentCommandOverride = cmd
+	})
+}
 
 // lookPath resolves an agent binary (swapped in tests). It defaults to a resolver
 // enriched with the user's login-shell PATH: eme usually runs inside a tmux popup,
@@ -329,6 +376,10 @@ var agentCmd = &cobra.Command{
 			return err
 		}
 
+		if cmd.Flags().Changed("set") {
+			return setWorktreeAgent(s, sess, w, agentSet)
+		}
+
 		if agentPick {
 			return pickWorktreeAgent(s, sess, w)
 		}
@@ -398,4 +449,5 @@ func agentRunning(w *state.Worktree) (bool, error) {
 func init() {
 	agentCmd.Flags().BoolVar(&agentDryRun, "dry-run", false, "print planned actions without executing")
 	agentCmd.Flags().BoolVar(&agentPick, "pick", false, "choose the agent for this worktree from the catalog")
+	agentCmd.Flags().StringVar(&agentSet, "set", "", `set and launch a specific agent command non-interactively ("none" for a bare shell)`)
 }

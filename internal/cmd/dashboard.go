@@ -83,6 +83,30 @@ func runDashboard() error {
 		}
 		return nil, fmt.Errorf("worktree %s/%s not found", sessionID, worktreeName)
 	})
+	// The dashboard draws the folder/agent pickers as in-place modals (no child process takes
+	// the screen). These factories keep the catalog + folder scan in cmd, so tui stays free of
+	// that knowledge; the dashboard then ships the choice to a background `eme` invocation.
+	model.SetFolderPicker(func() *tui.FolderPickerModel {
+		items, _ := scanFolders() // a scan error just yields an empty list; the user can still type a path
+		return tui.NewFolderPicker(items)
+	})
+	model.SetAgentPicker(func(sessionID, worktreeName string) *tui.AgentPickerModel {
+		catalog := cfg.Catalog()
+		items := agentItems(catalog)
+		def := ""
+		if st, err := loadState(); err == nil {
+			if sess := st.SessionByID(sessionID); sess != nil {
+				command := sess.AgentCommand
+				if worktreeName != "" {
+					if w := sess.WorktreeByName(worktreeName); w != nil {
+						command = resolvedAgentCommand(sess, w)
+					}
+				}
+				def = defaultAgentName(catalog, command)
+			}
+		}
+		return tui.NewAgentPicker(items, def)
+	})
 	finalModel, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	if err != nil {
 		return fmt.Errorf("dashboard: %w", err)

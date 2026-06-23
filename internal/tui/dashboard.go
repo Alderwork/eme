@@ -124,6 +124,17 @@ type DashboardModel struct {
 	// Name) so a reload can tell whether the peek's row is still the selected one —
 	// Name alone is ambiguous across sessions.
 	peekSID string
+	// modal, when non-nil, is an in-dashboard dialog (worktree-name input, agent picker, or
+	// folder picker) drawn centered over the frozen tree via overlayCenter — so an action's
+	// prompt never clears the dashboard. While it is open it owns the keyboard; flow holds
+	// the multi-step context that decides what completing it runs. The pickers are built by
+	// injected factories so the cmd layer keeps the agent catalog and folder scan, leaving
+	// tui free of that knowledge; when a factory is nil the action falls back to a child
+	// process (runChild), preserving the pre-modal behavior.
+	modal            overlayModal
+	flow             *modalFlow
+	makeAgentPicker  func(sessionID, worktreeName string) *AgentPickerModel
+	makeFolderPicker func() *FolderPickerModel
 }
 
 // NewDashboard creates a dashboard model. reload is called after each child
@@ -301,8 +312,13 @@ func (m *DashboardModel) tally() string {
 	return strings.Join(parts, mutedStyle.Render(" · "))
 }
 
-// actionFinishedMsg is delivered after a child `eme` process exits.
-type actionFinishedMsg struct{ err error }
+// actionFinishedMsg is delivered after a child `eme` process exits. output carries the
+// child's combined output when it ran in the background (runChildBackground); it is empty
+// for foreground children (runChild), whose output went straight to the terminal.
+type actionFinishedMsg struct {
+	err    error
+	output string
+}
 
 // tickMsg drives the auto-refresh ticker.
 type tickMsg struct{}
@@ -323,6 +339,10 @@ func (m *DashboardModel) Init() tea.Cmd { return m.tick() }
 
 // Update implements tea.Model.
 func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// An open modal owns input until it closes; route everything to it.
+	if m.modal != nil {
+		return m.updateWithModal(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.pending != nil {
@@ -378,7 +398,11 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "n":
-			return m, m.runChild("new", "--no-switch")
+			// New project: pick the folder, then the agent, both as in-dashboard modals.
+			if !m.modalsWired() {
+				return m, m.runChild("new", "--no-switch")
+			}
+			return m, m.openModal(m.makeFolderPicker(), &modalFlow{kind: flowNewProject})
 		case "c":
 			// Create a worktree in the session under the cursor (header or worktree).
 			// A plain (non-git) folder has no git worktrees, so gate the action here:
@@ -389,18 +413,30 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.notice = ""
-				return m, m.runChild("new", "--worktree", sessionKey(m.views[si]), "--no-switch")
+				sk := sessionKey(m.views[si])
+				if !m.modalsWired() {
+					return m, m.runChild("new", "--worktree", sk, "--no-switch")
+				}
+				return m, m.openModal(NewInput("Worktree name"), &modalFlow{kind: flowWorktree, sessKey: sk})
 			}
 		case "a":
+			// Toggle the agent in the selected worktree — non-interactive, so run it in the
+			// background instead of handing over the screen.
 			if args, ok := m.AgentArgs(false); ok {
-				return m, m.runChild(args...)
+				return m, m.runChildBackground(args...)
 			}
 			m.notice = "select a worktree to run an agent (the cursor is on a session)"
 		case "A":
-			if args, ok := m.AgentArgs(true); ok {
-				return m, m.runChild(args...)
+			// Re-pick the agent for the selected worktree via an in-dashboard picker.
+			w := m.selected()
+			if w == nil {
+				m.notice = "select a worktree to run an agent (the cursor is on a session)"
+				break
 			}
-			m.notice = "select a worktree to run an agent (the cursor is on a session)"
+			if !m.modalsWired() {
+				return m, m.runChild("agent", w.SessionID, w.Name, "--pick")
+			}
+			return m, m.openModal(m.makeAgentPicker(w.SessionID, w.Name), &modalFlow{kind: flowAgentOnly, sessKey: w.SessionID, wtName: w.Name})
 		case "x":
 			// Clear a finished agent's frozen pane back to idle. Gated to dead-pane
 			// statuses so it never disturbs a live or never-run worktree; `eme clean`
@@ -445,7 +481,7 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		m.refresh(msg.err)
+		m.refresh(msg.err, msg.output)
 	case tickMsg:
 		m.tickReload()
 		return m, m.tick()
@@ -554,7 +590,13 @@ func (m *DashboardModel) View() string {
 	}
 	lines = append(lines, bottom...)
 
-	return panelStyle.Width(boxWidth).Render(strings.Join(lines, "\n"))
+	panel := panelStyle.Width(boxWidth).Render(strings.Join(lines, "\n"))
+	// An open dialog is drawn centered over the (frozen) tree, so an action's prompt floats
+	// on top of the dashboard instead of clearing it.
+	if m.modal != nil {
+		return overlayCenter(panel, m.modal.Box())
+	}
+	return panel
 }
 
 // clampWidth truncates s to at most width display columns, preserving ANSI styling, so a
@@ -811,13 +853,18 @@ func padCell(s string, width int) string {
 }
 
 // refresh re-reads the view-model after a child action, recording any error as a
-// transient notice. It never quits the dashboard.
-func (m *DashboardModel) refresh(actionErr error) {
+// transient notice. It never quits the dashboard. When the action ran in the background,
+// output is the child's combined output — preferred for the notice because it carries
+// eme's friendly message (summary line) rather than a bare "exit status 1".
+func (m *DashboardModel) refresh(actionErr error, output string) {
 	m.closePeek() // the action may have changed the pane; the captured peek is now stale
-	if actionErr != nil {
-		m.notice = actionErr.Error()
-	} else {
+	switch {
+	case actionErr == nil:
 		m.notice = ""
+	case strings.TrimSpace(output) != "":
+		m.notice = firstMeaningfulLine(output)
+	default:
+		m.notice = actionErr.Error()
 	}
 	if m.reload == nil {
 		return
@@ -1036,6 +1083,33 @@ func (m *DashboardModel) runChild(args ...string) tea.Cmd {
 	return tea.ExecProcess(exec.Command(binary, args...), func(err error) tea.Msg {
 		return actionFinishedMsg{err: err}
 	})
+}
+
+// runChildBackground runs `eme <args...>` to completion WITHOUT handing it the terminal, so
+// the dashboard keeps rendering uninterrupted (no alt-screen flash). Use it for the work
+// behind an in-dashboard modal and for non-interactive actions; its combined output is
+// captured and surfaced as a notice on failure. Contrast runChild, which suspends the
+// dashboard and gives the child the screen for its own interactive UI.
+func (m *DashboardModel) runChildBackground(args ...string) tea.Cmd {
+	binary, err := os.Executable()
+	if err != nil {
+		return func() tea.Msg { return actionFinishedMsg{err: fmt.Errorf("locate eme binary: %w", err)} }
+	}
+	return func() tea.Msg {
+		out, err := exec.Command(binary, args...).CombinedOutput()
+		return actionFinishedMsg{err: err, output: string(out)}
+	}
+}
+
+// firstMeaningfulLine returns the first non-blank line of s with any "eme: " prefix
+// stripped — turning a child's multi-line error block into a one-line dashboard notice.
+func firstMeaningfulLine(s string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if ln = strings.TrimSpace(ln); ln != "" {
+			return strings.TrimPrefix(ln, "eme: ")
+		}
+	}
+	return ""
 }
 
 // SwitchTarget reports the worktree the user chose to switch to with Enter, if

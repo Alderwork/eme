@@ -129,9 +129,15 @@ func NewSession(name, windowName, cwd string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// NewWindow creates a new window in the session and returns its window id.
+// NewWindow creates a new window in the session and returns its window id. It is
+// detached (-d): the new window is NOT made current and the attached client does
+// not jump to it. eme moves the client deliberately afterward (via SwitchClient /
+// maybeSwitchClient), so a window must never steal focus the instant it is born —
+// otherwise createWorktree's agent picker, which runs after the window exists,
+// would be left in a backgrounded pane the user can't see. Mirrors NewSession,
+// which is likewise detached.
 func NewWindow(session, name, cwd string) (string, error) {
-	args := []string{"new-window", "-t", session + ":", "-P", "-F", "#{window_id}"}
+	args := []string{"new-window", "-d", "-t", session + ":", "-P", "-F", "#{window_id}"}
 	if name != "" {
 		args = append(args, "-n", name)
 	}
