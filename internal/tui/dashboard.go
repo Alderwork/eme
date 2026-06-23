@@ -524,6 +524,9 @@ func (m *DashboardModel) View() string {
 		clampWidth(fitLine(left, m.tally(), inner), inner),
 		clampWidth(mutedStyle.Render(strings.Repeat("─", inner)), inner),
 	}
+	if m.hasWorktree() {
+		header = append(header, schemaLine(inner))
+	}
 
 	// Bottom block (peek + notice/confirm + footer), built before the body so the body's
 	// row budget can subtract it. Each entry is wrapped/clamped to a single terminal row so
@@ -737,6 +740,28 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 		}
 	}
 	return row
+}
+
+// schemaLine renders the column-label row aligned to the worktree grid: a gutter then
+// `status`, `worktree`, `branch`, `location` at the offsets worktreeLine uses. Muted,
+// lowercase (DESIGN §8), no hue. Clamped to inner like every header line.
+func schemaLine(inner int) string {
+	row := strings.Repeat(" ", colGutterW) +
+		padCell("status", colStatusW) + colSep +
+		padCell("worktree", colNameW) + colSep +
+		padCell("branch", colBranchW) + colSep +
+		"location"
+	return clampWidth(mutedStyle.Render(row), inner)
+}
+
+// hasWorktree reports whether any session has at least one worktree row to label.
+func (m *DashboardModel) hasWorktree() bool {
+	for si := range m.views {
+		if len(m.views[si].Worktrees) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // sessionLine renders one session header row: a fold caret (▾ open · ▸ folded), the

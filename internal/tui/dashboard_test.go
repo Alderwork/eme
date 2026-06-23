@@ -1102,3 +1102,43 @@ func TestTruncLeftWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaLine(t *testing.T) {
+	s := schemaLine(80)
+	for _, label := range []string{"status", "worktree", "branch", "location"} {
+		if !strings.Contains(s, label) {
+			t.Errorf("schemaLine missing label %q: %q", label, s)
+		}
+	}
+	if w := lipgloss.Width(s); w > 80 {
+		t.Errorf("schemaLine width %d exceeds inner 80", w)
+	}
+}
+
+func TestDashboardViewShowsSchemaRowWhenWorktrees(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	v := m.View()
+	if !strings.Contains(v, "location") || !strings.Contains(v, "worktree") {
+		t.Errorf("expected the schema label row in the view:\n%s", v)
+	}
+}
+
+func TestDashboardViewOmitsSchemaRowWhenEmpty(t *testing.T) {
+	m := NewDashboard([]SessionView{}, nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	v := m.View()
+	if strings.Contains(v, "location") {
+		t.Errorf("empty dashboard must not show the schema row:\n%s", v)
+	}
+}
+
+func TestDashboardSchemaRowStaysPinnedWhenScrolled(t *testing.T) {
+	m := NewDashboard(manyViews(8, 4), nil)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
+	m.cursor = len(m.rows) - 1 // scroll to the bottom
+	v := m.View()
+	if !strings.Contains(v, "location") {
+		t.Errorf("schema row should stay pinned (in the header) when the tree scrolls:\n%s", v)
+	}
+}
