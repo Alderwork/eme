@@ -37,6 +37,7 @@ var (
 	addStyle      = lipgloss.NewStyle().Foreground(theme.Muted) // an addition is not an alert
 	delStyle      = lipgloss.NewStyle().Foreground(theme.Danger)
 	agentStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
+	locationStyle = lipgloss.NewStyle().Foreground(theme.Muted) // worktree dir; reference info, no hue
 
 	// selectedGutter marks the cursor row with a quiet, non-hue ▌ on the surface
 	// lift. Selection is a separate channel from the beacon: a background platform,
@@ -47,6 +48,18 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(theme.Border).
 			Padding(0, 1)
+)
+
+// Worktree-row column geometry, shared by worktreeLine and schemaLine so the data rows
+// and the column-label row never drift out of alignment.
+const (
+	colGutterW = 2  // cursor gutter ("▌ " or "  ")
+	colStatusW = 10 // status glyph + space + label padded to 8
+	colNameW   = 14
+	colBranchW = 16
+	colSep     = "  "
+	// wtPrefixW is the width consumed before the trailing location column.
+	wtPrefixW = colGutterW + colStatusW + len(colSep) + colNameW + len(colSep) + colBranchW + len(colSep)
 )
 
 // rowKind distinguishes a session header row from a worktree row in the flattened,
@@ -691,12 +704,9 @@ func fitLine(left, right string, width int) string {
 // attention are separate channels (DESIGN.md §5.3).
 func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) string {
 	statusRaw := fmt.Sprintf("%s %-8s", w.Status.Glyph(), w.Status.Label())
-	nameRaw := padCell(w.Name, 14)
-	branchRaw := padCell(w.Branch, 16)
+	nameRaw := padCell(w.Name, colNameW)
+	branchRaw := padCell(w.Branch, colBranchW)
 
-	// bg paints the surface lift on the cursor row and is a no-op elsewhere.
-	// Applying it to every cell and gap keeps the platform continuous beneath the
-	// per-cell foreground colors.
 	bg := func(s lipgloss.Style) lipgloss.Style {
 		if selected {
 			return s.Background(theme.Surface)
@@ -704,25 +714,25 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 		return s
 	}
 	plain := lipgloss.NewStyle()
-	sep := bg(plain).Render("  ")
-
-	var trailerCell string
-	if w.AgentLabel != "" {
-		trailerCell = bg(agentStyle).Render(w.AgentLabel)
-	} else if w.HasDiff {
-		trailerCell = bg(addStyle).Render(fmt.Sprintf("+%d", w.Added)) + bg(plain).Render(" ") + bg(delStyle).Render(fmt.Sprintf("-%d", w.Deleted))
-	}
+	sep := bg(plain).Render(colSep)
 
 	gutter := bg(plain).Render("  ")
 	if selected {
 		gutter = selectedGutter.Render("▌") + bg(plain).Render(" ")
 	}
 
+	// Location replaces the old agent/diff trailer. Left-truncate so the worktree-dir
+	// tail (the identifying part) survives a narrow column.
+	var locCell string
+	if budget := inner - wtPrefixW; budget >= 1 && w.Location != "" {
+		locCell = bg(locationStyle).Render(truncLeftWidth(w.Location, budget))
+	}
+
 	row := gutter +
 		bg(statusStyle[w.Status]).Render(statusRaw) + sep +
 		bg(textStyle).Render(nameRaw) + sep +
 		bg(branchStyle).Render(branchRaw) + sep +
-		trailerCell
+		locCell
 
 	if selected {
 		if pad := inner - lipgloss.Width(row); pad > 0 {
@@ -839,6 +849,33 @@ func truncateWidth(s string, max int) string {
 		w += rw
 	}
 	return b.String() + "…"
+}
+
+// truncLeftWidth shortens s to at most max display columns by dropping from the LEFT,
+// prefixing "…" so the trailing (most specific) portion survives — the path-tail case,
+// the mirror of truncateWidth which cuts from the right.
+func truncLeftWidth(s string, max int) string {
+	if max < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= max {
+		return s
+	}
+	if max == 1 {
+		return "…"
+	}
+	runes := []rune(s)
+	w := 0
+	i := len(runes)
+	for i > 0 {
+		rw := lipgloss.Width(string(runes[i-1]))
+		if w+rw > max-1 { // reserve one column for the leading ellipsis
+			break
+		}
+		w += rw
+		i--
+	}
+	return "…" + string(runes[i:])
 }
 
 // padCell truncates s to width display columns and pads it to exactly that many columns,

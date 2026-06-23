@@ -909,7 +909,8 @@ func TestDashboardViewFitsPopupHeight(t *testing.T) {
 func TestDashboardViewNoLineWiderThanPopup(t *testing.T) {
 	views := []SessionView{{DisplayName: "proj", Root: "/code/proj", Worktrees: []WorktreeView{
 		{Name: "a-very-long-worktree-name-that-overflows", Branch: "feature/a-very-long-branch-name-too",
-			SessionID: "proj", IsMain: true, Status: StatusWorking, AgentLabel: "claude-sonnet-with-a-long-suffix"},
+			SessionID: "proj", IsMain: true, Status: StatusWorking, AgentLabel: "claude-sonnet-with-a-long-suffix",
+			Location: "…/some/really/long/path/that/keeps/going/and/going/overflow"},
 	}}}
 	m := NewDashboard(views, nil)
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
@@ -1068,5 +1069,36 @@ func TestDashboardSelectedHeaderIsHighlightBar(t *testing.T) {
 	plain := m.sessionLine(0, false, 60)
 	if strings.Contains(plain, "48;2;") {
 		t.Errorf("non-selected header should not carry a background escape, got %q", plain)
+	}
+}
+
+func TestWorktreeLineShowsLocationNotAgent(t *testing.T) {
+	m := NewDashboard(nil, nil)
+	w := WorktreeView{Name: "gege", Branch: "gege", Status: StatusWorking, AgentLabel: "claude", Location: "…/eme/gege"}
+	line := m.worktreeLine(w, false, 80)
+	if !strings.Contains(line, "…/eme/gege") {
+		t.Errorf("worktree row should show the location, got %q", line)
+	}
+	if strings.Contains(line, "claude") {
+		t.Errorf("agent label must no longer render in the row, got %q", line)
+	}
+}
+
+func TestTruncLeftWidth(t *testing.T) {
+	cases := []struct {
+		s    string
+		max  int
+		want string
+	}{
+		{"…/eme/gege", 80, "…/eme/gege"}, // fits → unchanged
+		{"abc", 3, "abc"},                 // exactly fits
+		{"abcdefghij", 5, "…ghij"},        // keep rightmost 4, prefix …
+		{"abc", 1, "…"},
+		{"abc", 0, ""},
+	}
+	for _, c := range cases {
+		if got := truncLeftWidth(c.s, c.max); got != c.want {
+			t.Errorf("truncLeftWidth(%q, %d) = %q, want %q", c.s, c.max, got, c.want)
+		}
 	}
 }
