@@ -904,7 +904,7 @@ func TestDashboardViewFitsPopupHeight(t *testing.T) {
 }
 
 // TestDashboardViewNoLineWiderThanPopup: no rendered line exceeds the popup width — a
-// long name/branch/agent label is truncated to its column, never wrapped to a second
+// long name/branch/location is truncated to its column, never wrapped to a second
 // row that would push the bottom border off-screen (#7, #2).
 func TestDashboardViewNoLineWiderThanPopup(t *testing.T) {
 	views := []SessionView{{DisplayName: "proj", Root: "/code/proj", Worktrees: []WorktreeView{

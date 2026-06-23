@@ -34,9 +34,6 @@ var (
 	sessionStyle  = lipgloss.NewStyle().Bold(true).Foreground(theme.Text)
 	rootStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
 	branchStyle   = lipgloss.NewStyle().Foreground(theme.Muted)
-	addStyle      = lipgloss.NewStyle().Foreground(theme.Muted) // an addition is not an alert
-	delStyle      = lipgloss.NewStyle().Foreground(theme.Danger)
-	agentStyle    = lipgloss.NewStyle().Foreground(theme.Muted)
 	locationStyle = lipgloss.NewStyle().Foreground(theme.Muted) // worktree dir; reference info, no hue
 
 	// selectedGutter marks the cursor row with a quiet, non-hue ▌ on the surface
