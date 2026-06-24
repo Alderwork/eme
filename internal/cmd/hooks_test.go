@@ -71,18 +71,21 @@ func TestEmeHookEvents_FourEventsWithMatchers(t *testing.T) {
 	}
 }
 
-// TestMergeClaudeHooks_AddsAllThreeIntoEmptySettings: a fresh settings file gains the
-// three eme events, each a command that stamps @eme_state.
-func TestMergeClaudeHooks_AddsAllThreeIntoEmptySettings(t *testing.T) {
-	out, added, err := mergeClaudeHooks(nil)
+// TestMergeClaudeHooks_AddsAllFourIntoEmptySettings: a fresh settings file gains all
+// four eme events, each a command that stamps @eme_state and @eme_state_at.
+func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
+	out, added, updated, err := mergeClaudeHooks(nil)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 3 {
-		t.Fatalf("added = %v, want 3 events", added)
+	if len(added) != 4 {
+		t.Fatalf("added = %v, want 4 events", added)
+	}
+	if len(updated) != 0 {
+		t.Fatalf("updated = %v, want none on fresh install", updated)
 	}
 	hm := hooksMap(t, decodeSettings(t, out))
-	for _, ev := range []string{"UserPromptSubmit", "Notification", "Stop"} {
+	for _, ev := range []string{"UserPromptSubmit", "Notification", "PreToolUse", "Stop"} {
 		groups := hm[ev]
 		if !groupsHaveEme(groups) {
 			t.Errorf("event %s missing an @eme_state command", ev)
@@ -95,6 +98,67 @@ func TestMergeClaudeHooks_AddsAllThreeIntoEmptySettings(t *testing.T) {
 	}
 	if !strings.HasPrefix(cmd, `[ -n "$TMUX" ]`) || !strings.HasSuffix(cmd, `|| true`) {
 		t.Errorf("Stop command must guard $TMUX and always exit 0, got %q", cmd)
+	}
+	// Notification must carry the permission_prompt matcher.
+	notifGroups := hm["Notification"]
+	if len(notifGroups) == 0 || notifGroups[len(notifGroups)-1].Matcher != "permission_prompt" {
+		t.Errorf("Notification group matcher = %q, want permission_prompt", notifGroups)
+	}
+	// PreToolUse must carry the AskUserQuestion matcher.
+	preGroups := hm["PreToolUse"]
+	if len(preGroups) == 0 || preGroups[len(preGroups)-1].Matcher != "AskUserQuestion" {
+		t.Errorf("PreToolUse group matcher = %q, want AskUserQuestion", preGroups)
+	}
+}
+
+// TestMergeClaudeHooks_UpgradesOldInstall: an old install (no @eme_state_at, no matchers)
+// is detected as outdated and re-installed with the current desired command+matchers.
+func TestMergeClaudeHooks_UpgradesOldInstall(t *testing.T) {
+	// Simulate an old install: Notification group with no matcher and old command (no @eme_state_at).
+	// Build via json.Marshal so embedded quotes/dollar signs are properly escaped.
+	oldCmd := `[ -n "$TMUX" ] && tmux set-option -p -t "$TMUX_PANE" @eme_state waiting || true`
+	oldGroup := claudeHookGroup{
+		Hooks: []claudeHookCommand{{Type: "command", Command: oldCmd}},
+	}
+	oldGroupJSON, err := json.Marshal(oldGroup)
+	if err != nil {
+		t.Fatalf("marshal old group: %v", err)
+	}
+	oldSettings, err := json.Marshal(map[string]map[string]json.RawMessage{
+		"hooks": {"Notification": json.RawMessage("[" + string(oldGroupJSON) + "]")},
+	})
+	if err != nil {
+		t.Fatalf("marshal old settings: %v", err)
+	}
+	out, added, updated, err := mergeClaudeHooks(oldSettings)
+	if err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+	// Notification should be updated (was eme-owned but outdated), others added.
+	foundUpdated := false
+	for _, e := range updated {
+		if e == "Notification" {
+			foundUpdated = true
+		}
+	}
+	if !foundUpdated {
+		t.Errorf("Notification not in updated=%v; expected upgrade from old command", updated)
+	}
+	hm := hooksMap(t, decodeSettings(t, out))
+	notifGroups := hm["Notification"]
+	if len(notifGroups) == 0 {
+		t.Fatal("Notification groups missing after upgrade")
+	}
+	upgraded := notifGroups[len(notifGroups)-1]
+	if upgraded.Matcher != "permission_prompt" {
+		t.Errorf("upgraded Notification matcher = %q, want permission_prompt", upgraded.Matcher)
+	}
+	if len(upgraded.Hooks) == 0 || !strings.Contains(upgraded.Hooks[0].Command, emeHookAtMarker) {
+		t.Errorf("upgraded Notification command missing @eme_state_at: %s", upgraded.Hooks[0].Command)
+	}
+	// added should include the 3 other events (UserPromptSubmit, PreToolUse, Stop).
+	if len(added) != 3 {
+		t.Errorf("added = %v, want 3 (non-Notification events)", added)
 	}
 }
 
@@ -109,12 +173,12 @@ func TestMergeClaudeHooks_PreservesOtherKeysAndHooks(t *testing.T) {
     "SessionEnd": [{"hooks": [{"type": "command", "command": "'/abs/cinch' agent-hook claude-session-end"}]}]
   }
 }`)
-	out, added, err := mergeClaudeHooks(existing)
+	out, added, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 3 {
-		t.Fatalf("added = %v, want 3", added)
+	if len(added) != 4 {
+		t.Fatalf("added = %v, want 4", added)
 	}
 	root := decodeSettings(t, out)
 	if _, ok := root["theme"]; !ok {
@@ -137,16 +201,16 @@ func TestMergeClaudeHooks_PreservesOtherKeysAndHooks(t *testing.T) {
 // TestMergeClaudeHooks_Idempotent: re-merging already-installed settings adds nothing
 // and returns the input unchanged.
 func TestMergeClaudeHooks_Idempotent(t *testing.T) {
-	first, _, err := mergeClaudeHooks(nil)
+	first, _, _, err := mergeClaudeHooks(nil)
 	if err != nil {
 		t.Fatalf("first merge: %v", err)
 	}
-	second, added, err := mergeClaudeHooks(first)
+	second, added, updated, err := mergeClaudeHooks(first)
 	if err != nil {
 		t.Fatalf("second merge: %v", err)
 	}
-	if len(added) != 0 {
-		t.Errorf("re-install added %v, want nothing (idempotent)", added)
+	if len(added) != 0 || len(updated) != 0 {
+		t.Errorf("re-install added=%v updated=%v, want nothing (idempotent)", added, updated)
 	}
 	if string(second) != string(first) {
 		t.Error("idempotent re-merge changed the bytes")
@@ -157,7 +221,7 @@ func TestMergeClaudeHooks_Idempotent(t *testing.T) {
 // non-eme hook on one of OUR events, eme appends its group rather than replacing.
 func TestMergeClaudeHooks_AppendsBesideForeignHookOnSameEvent(t *testing.T) {
 	existing := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}`)
-	out, added, err := mergeClaudeHooks(existing)
+	out, added, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -191,7 +255,7 @@ func TestRemoveEmeHooks_StripsOnlyEme(t *testing.T) {
 	base := []byte(`{"theme":"dark","hooks":{` +
 		`"SessionEnd":[{"hooks":[{"type":"command","command":"cinch x"}]}],` +
 		`"Stop":[{"hooks":[{"type":"command","command":"echo mine"}]}]}}`)
-	installed, _, err := mergeClaudeHooks(base)
+	installed, _, _, err := mergeClaudeHooks(base)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -199,17 +263,23 @@ func TestRemoveEmeHooks_StripsOnlyEme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if len(removed) != 3 {
-		t.Fatalf("removed = %v, want 3 events", removed)
+	if len(removed) != 4 {
+		t.Fatalf("removed = %v, want 4 events", removed)
 	}
 	root := decodeSettings(t, cleaned)
 	if _, ok := root["theme"]; !ok {
 		t.Error("theme dropped during uninstall")
 	}
 	hm := hooksMap(t, root)
-	// UserPromptSubmit and Notification were eme-only → removed entirely.
+	// UserPromptSubmit, Notification, PreToolUse were eme-only → removed entirely.
 	if _, ok := hm["UserPromptSubmit"]; ok {
 		t.Error("empty UserPromptSubmit event should be deleted")
+	}
+	if _, ok := hm["Notification"]; ok {
+		t.Error("empty Notification event should be deleted")
+	}
+	if _, ok := hm["PreToolUse"]; ok {
+		t.Error("empty PreToolUse event should be deleted")
 	}
 	// Stop keeps the foreign group; SessionEnd untouched.
 	if len(hm["Stop"]) != 1 || hm["Stop"][0].Hooks[0].Command != "echo mine" {
@@ -241,7 +311,7 @@ func TestRemoveEmeHooks_NoEmeIsNoop(t *testing.T) {
 
 // TestMergeClaudeHooks_RejectsInvalidJSON surfaces a clear error rather than corrupting.
 func TestMergeClaudeHooks_RejectsInvalidJSON(t *testing.T) {
-	if _, _, err := mergeClaudeHooks([]byte(`{not json`)); err == nil {
+	if _, _, _, err := mergeClaudeHooks([]byte(`{not json`)); err == nil {
 		t.Fatal("expected an error for invalid JSON input")
 	}
 }
@@ -250,12 +320,12 @@ func TestMergeClaudeHooks_RejectsInvalidJSON(t *testing.T) {
 // (or a whole-file null) must merge cleanly, not panic on a nil-map assignment.
 func TestMergeClaudeHooks_NullHooksDoesNotPanic(t *testing.T) {
 	for _, in := range [][]byte{[]byte(`{"hooks": null}`), []byte(`null`), []byte(`{}`)} {
-		out, added, err := mergeClaudeHooks(in)
+		out, added, _, err := mergeClaudeHooks(in)
 		if err != nil {
 			t.Fatalf("merge(%s): %v", in, err)
 		}
-		if len(added) != 3 {
-			t.Errorf("merge(%s) added %v, want 3", in, added)
+		if len(added) != 4 {
+			t.Errorf("merge(%s) added %v, want 4", in, added)
 		}
 		if !groupsHaveEme(hooksMap(t, decodeSettings(t, out))["Stop"]) {
 			t.Errorf("merge(%s) did not install the Stop hook", in)
@@ -273,7 +343,7 @@ func TestMergeClaudeHooks_NullHooksDoesNotPanic(t *testing.T) {
 // pass through as raw bytes, never re-serialized from a lossy typed shape.
 func TestMergeClaudeHooks_PreservesUnknownFieldsOnOurEvents(t *testing.T) {
 	existing := []byte(`{"hooks":{"Stop":[{"matcher":"","hooks":[{"type":"command","command":"my-formatter","timeout":30}]}]}}`)
-	installed, _, err := mergeClaudeHooks(existing)
+	installed, _, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
@@ -294,7 +364,7 @@ func TestMergeClaudeHooks_PreservesUnknownFieldsOnOurEvents(t *testing.T) {
 // be mistaken for eme's — install appends eme's hook beside it, uninstall never strips it.
 func TestEmeHookRecognition_IgnoresForeignMentionOfMarker(t *testing.T) {
 	existing := []byte(`{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo checking @eme_state value"}]}]}}`)
-	installed, added, err := mergeClaudeHooks(existing)
+	installed, added, _, err := mergeClaudeHooks(existing)
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}

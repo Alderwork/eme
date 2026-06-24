@@ -129,15 +129,15 @@ func runHooksInstall() error {
 	if err != nil {
 		return err
 	}
-	merged, added, err := mergeClaudeHooks(existing)
+	merged, added, updated, err := mergeClaudeHooks(existing)
 	if err != nil {
 		return errors.Wrap(errors.CodeConfigInvalid,
 			"Could not update Claude settings.",
 			"~/.claude/settings.json could not be read as the expected hooks structure.",
 			"Ensure it is valid JSON and that each hooks entry is an array of hook groups.", err)
 	}
-	if len(added) == 0 {
-		fmt.Println("eme status hooks are already installed for claude (nothing to do).")
+	if len(added) == 0 && len(updated) == 0 {
+		fmt.Println("eme status hooks are already up to date for claude (nothing to do).")
 		return nil
 	}
 	if existed {
@@ -153,13 +153,28 @@ func runHooksInstall() error {
 	}
 	fmt.Printf("Installed eme status hooks for claude into %s:\n", path)
 	for _, h := range emeHookEvents {
-		fmt.Printf("  %-16s → %s\n", h.Event, h.State)
+		fmt.Printf("  %-16s → %-7s [%s]\n", h.Event, h.State, hookEventVerb(h.Event, added, updated))
 	}
 	if existed {
 		fmt.Printf("Backed up your previous settings to %s.eme-bak (other hooks preserved).\n", path)
 	}
 	fmt.Println("Restart the agent (or start a new one) for the hooks to take effect.")
 	return nil
+}
+
+// hookEventVerb labels an event in the install report as added, updated, or unchanged.
+func hookEventVerb(event string, added, updated []string) string {
+	for _, e := range added {
+		if e == event {
+			return "added"
+		}
+	}
+	for _, e := range updated {
+		if e == event {
+			return "updated"
+		}
+	}
+	return "unchanged"
 }
 
 func runHooksUninstall() error {
@@ -197,62 +212,89 @@ func runHooksUninstall() error {
 	return nil
 }
 
-// mergeClaudeHooks adds eme's status hooks to a Claude settings.json byte blob without
-// disturbing any other key or any non-eme hook. It is idempotent: an event that already
-// carries an eme hook is left untouched. Returns the new bytes and the events added.
-func mergeClaudeHooks(existing []byte) ([]byte, []string, error) {
+// mergeClaudeHooks reconciles eme's status hooks into a Claude settings.json blob: for
+// each event it leaves every FOREIGN group byte-exact and ensures exactly one eme-owned
+// group equal to the current desired (matcher + command). A missing eme group is appended
+// (added); an outdated one — old command without the timestamp, or the wrong matcher — is
+// replaced (updated). When nothing changed across all events the input bytes are returned
+// unchanged, so a steady-state re-install is byte-stable.
+func mergeClaudeHooks(existing []byte) ([]byte, []string, []string, error) {
 	root := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(existing)) > 0 {
 		if err := json.Unmarshal(existing, &root); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	if root == nil { // settings.json was literally `null`
+	if root == nil {
 		root = map[string]json.RawMessage{}
 	}
 	hooks := map[string]json.RawMessage{}
 	if raw, ok := root["hooks"]; ok {
 		if err := json.Unmarshal(raw, &hooks); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
-	if hooks == nil { // "hooks": null — avoid a nil-map assignment panic below
+	if hooks == nil {
 		hooks = map[string]json.RawMessage{}
 	}
 
-	var added []string
+	var added, updated []string
 	for _, h := range emeHookEvents {
 		groups, err := decodeRawGroups(hooks[h.Event])
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		if rawGroupsHaveEme(groups) {
-			continue // idempotent
+		desiredCmd := emeHookCommand(h.State)
+		kept := make([]json.RawMessage, 0, len(groups))
+		emeCount, current := 0, false
+		for _, g := range groups {
+			if rawGroupHasEme(g) {
+				emeCount++
+				if emeGroupIsCurrent(g, h.Matcher, desiredCmd) {
+					current = true
+				}
+				continue // eme's groups are not carried through; we re-add the canonical one
+			}
+			kept = append(kept, g) // foreign group passes through verbatim
 		}
-		// Append eme's OWN group as raw bytes and leave every foreign group as the
-		// verbatim json.RawMessage it arrived as — so any extra keys on a user's hook
-		// (e.g. a per-command `timeout`) survive untouched. We only ever re-serialize
-		// the one group we fully own.
+		if emeCount == 1 && current {
+			continue // already exactly our desired group — no change for this event
+		}
 		emeGroup, err := json.Marshal(claudeHookGroup{
-			Hooks: []claudeHookCommand{{Type: "command", Command: emeHookCommand(h.State)}},
+			Matcher: h.Matcher,
+			Hooks:   []claudeHookCommand{{Type: "command", Command: desiredCmd}},
 		})
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		groups = append(groups, json.RawMessage(emeGroup))
-		raw, err := json.Marshal(groups)
+		kept = append(kept, json.RawMessage(emeGroup))
+		raw, err := json.Marshal(kept)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		hooks[h.Event] = raw
-		added = append(added, h.Event)
+		if emeCount == 0 {
+			added = append(added, h.Event)
+		} else {
+			updated = append(updated, h.Event)
+		}
 	}
-	if len(added) == 0 {
-		return existing, nil, nil
+	if len(added) == 0 && len(updated) == 0 {
+		return existing, nil, nil, nil
 	}
-
 	out, err := encodeRootWithHooks(root, hooks)
-	return out, added, err
+	return out, added, updated, err
+}
+
+// emeGroupIsCurrent reports whether an eme-owned hook group already equals the desired
+// matcher and single command — used to keep a steady-state re-install a no-op.
+func emeGroupIsCurrent(raw json.RawMessage, matcher, command string) bool {
+	var g claudeHookGroup
+	if err := json.Unmarshal(raw, &g); err != nil {
+		return false
+	}
+	return g.Matcher == matcher && len(g.Hooks) == 1 &&
+		g.Hooks[0].Type == "command" && g.Hooks[0].Command == command
 }
 
 // removeEmeHooks strips only eme's status hooks (recognized by their set-option
@@ -361,15 +403,6 @@ func rawGroupHasEme(raw json.RawMessage) bool {
 		return false
 	}
 	return groupsHaveEme([]claudeHookGroup{g})
-}
-
-func rawGroupsHaveEme(groups []json.RawMessage) bool {
-	for _, g := range groups {
-		if rawGroupHasEme(g) {
-			return true
-		}
-	}
-	return false
 }
 
 func encodeRootWithHooks(root, hooks map[string]json.RawMessage) ([]byte, error) {
