@@ -1160,3 +1160,19 @@ func TestSchemaLine_HasAgeLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusStyleFor_DimsQuiet(t *testing.T) {
+	normal := statusStyleFor(WorktreeView{Status: StatusWorking})
+	quiet := statusStyleFor(WorktreeView{Status: StatusWorking, Quiet: true})
+	if normal.GetForeground() == quiet.GetForeground() && normal.GetFaint() == quiet.GetFaint() {
+		t.Error("quiet working row should render visually distinct (dim) from a busy one")
+	}
+}
+
+func TestQuiet_DoesNotCountAsAttention(t *testing.T) {
+	// Quiet is a soft hint, not a beacon: a quiet WORKING agent must not flip NeedsAttention
+	// (which drives the header tally and the ambient ✗/● segment).
+	if StatusWorking.NeedsAttention() {
+		t.Error("working must never need attention; quiet is layered on working, not a status")
+	}
+}

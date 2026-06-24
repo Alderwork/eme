@@ -31,6 +31,20 @@ var statusStyle = map[AgentStatus]lipgloss.Style{
 	StatusCrashed: lipgloss.NewStyle().Foreground(theme.Danger).Bold(true),
 }
 
+// quietStyle dims the working hue for an agent that has gone quiet (no state change for
+// quiet_after). It is the soft, no-alarm half of silence detection: a dimmer read that
+// survives color-off via the large age value beside it — never a new glyph, label, or hue.
+var quietStyle = lipgloss.NewStyle().Foreground(theme.Working).Faint(true)
+
+// statusStyleFor picks a worktree's status cell style: the dim quiet variant when the
+// agent has gone silent, else the normal per-status style.
+func statusStyleFor(w WorktreeView) lipgloss.Style {
+	if w.Quiet {
+		return quietStyle
+	}
+	return statusStyle[w.Status]
+}
+
 // Glyph returns the status dot. The progression ● ◐ ○ · is a fullness ramp that
 // reads with color off; ✗ marks a crash. Under EME_ASCII it degrades to the DESIGN
 // §6.4 ASCII set so the glyph channel survives a terminal that can't render the

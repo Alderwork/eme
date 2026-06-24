@@ -735,7 +735,7 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 	}
 
 	row := gutter +
-		bg(statusStyle[w.Status]).Render(statusRaw) + sep +
+		bg(statusStyleFor(w)).Render(statusRaw) + sep +
 		bg(ageStyle).Render(ageRaw) + sep +
 		bg(textStyle).Render(nameRaw) + sep +
 		bg(branchStyle).Render(branchRaw) + sep +
