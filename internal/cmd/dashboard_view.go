@@ -36,7 +36,7 @@ func buildViews(sessions []state.Session, snap map[string]tmux.PaneInfo, withDif
 	views := make([]tui.SessionView, 0, len(sessions))
 	for i := range sessions {
 		s := &sessions[i]
-		sv := tui.SessionView{DisplayName: s.DisplayName, Root: s.Root, IsPlain: s.Layout == state.LayoutPlain}
+		sv := tui.SessionView{DisplayName: s.DisplayName, Root: s.Root, IsPlain: s.Layout == state.LayoutPlain, Caffeinate: s.CaffeinateMode}
 		for j := range s.Worktrees {
 			w := &s.Worktrees[j]
 			info, present := snap[w.TmuxWindowID]
