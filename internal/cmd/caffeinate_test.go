@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/jinmu/eme/internal/runner"
+	"github.com/jinmu/eme/internal/state"
+	"github.com/jinmu/eme/internal/tmux"
 	"github.com/jinmu/eme/internal/tui"
 )
 
@@ -46,5 +50,93 @@ func TestNormalizeMode(t *testing.T) {
 	}
 	if _, err := normalizeMode("nope"); err == nil {
 		t.Fatal("invalid mode must error")
+	}
+}
+
+func stubCaffeinateEnv(t *testing.T) *runner.Mock {
+	t.Helper()
+	prevSupport := caffeinateSupportedFn
+	caffeinateSupportedFn = func() bool { return true }
+	t.Cleanup(func() { caffeinateSupportedFn = prevSupport })
+
+	prevExec := emeExecutable
+	emeExecutable = func() (string, error) { return "/abs/eme", nil }
+	t.Cleanup(func() { emeExecutable = prevExec })
+
+	mock := runner.NewMock()
+	prevRunner := tmux.Runner
+	tmux.Runner = mock
+	t.Cleanup(func() { tmux.Runner = prevRunner })
+
+	prevSock := tmux.Socket
+	tmux.Socket = ""
+	t.Cleanup(func() { tmux.Socket = prevSock })
+	return mock
+}
+
+func TestArmCaffeinate_SpawnsDaemonWindow(t *testing.T) {
+	mock := stubCaffeinateEnv(t)
+	sess := &state.Session{ID: "proj-1", TmuxName: "proj", Layout: state.LayoutNestedBare, Root: "/code/proj"}
+
+	// The new-window call must be stubbed: runner.Mock errors on unstubbed calls, and
+	// armCaffeinate propagates a NewWindowCmd failure. MainPath() = Root/main for
+	// nested-bare. The preceding disarm (kill-window) is unstubbed-but-ignored (best-effort).
+	want := []string{"new-window", "-d", "-t", "proj:", "-P", "-F", "#{window_id}",
+		"-n", caffeinateWindowName, "-c", "/code/proj/main",
+		"/abs/eme", "caffeinate-daemon", "proj-1", "--mode", "auto"}
+	mock.Set("tmux", want, "@9", "", nil)
+
+	if err := armCaffeinate(sess, "auto"); err != nil {
+		t.Fatalf("armCaffeinate: %v", err)
+	}
+	// First call disarms any stale window; the new-window call carries the daemon argv.
+	var spawned bool
+	for _, c := range mock.Calls {
+		if len(c.Args) > 0 && c.Args[0] == "new-window" &&
+			slices.Contains(c.Args, "caffeinate-daemon") &&
+			slices.Contains(c.Args, "proj-1") &&
+			slices.Contains(c.Args, "auto") {
+			spawned = true
+		}
+	}
+	if !spawned {
+		t.Fatalf("expected a new-window with the daemon argv, got %+v", mock.Calls)
+	}
+}
+
+func TestSetCaffeinate_OffClearsAndDisarms(t *testing.T) {
+	mock := stubCaffeinateEnv(t)
+	s := &state.State{Version: state.Version, Sessions: []state.Session{
+		{ID: "proj-1", TmuxName: "proj", CaffeinateMode: "manual"},
+	}}
+	withTempStatePath(t, s) // saves under a temp statePath; see helper below
+	sess := &s.Sessions[0]
+
+	if err := setCaffeinate(s, sess, "off"); err != nil {
+		t.Fatalf("setCaffeinate off: %v", err)
+	}
+	if sess.CaffeinateMode != "" {
+		t.Fatalf("mode = %q, want cleared", sess.CaffeinateMode)
+	}
+	var killed bool
+	for _, c := range mock.Calls {
+		if len(c.Args) >= 2 && c.Args[0] == "kill-window" && c.Args[2] == "proj:"+caffeinateWindowName {
+			killed = true
+		}
+	}
+	if !killed {
+		t.Fatalf("expected kill-window proj:%s, got %+v", caffeinateWindowName, mock.Calls)
+	}
+}
+
+func withTempStatePath(t *testing.T, s *state.State) {
+	t.Helper()
+	prev := statePath
+	statePath = t.TempDir() + "/state.json"
+	t.Cleanup(func() { statePath = prev })
+	if s != nil {
+		if err := s.Save(statePath); err != nil {
+			t.Fatalf("save state: %v", err)
+		}
 	}
 }

@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 	"strings"
 	"time"
 
 	"github.com/jinmu/eme/internal/errors"
+	"github.com/jinmu/eme/internal/state"
+	"github.com/jinmu/eme/internal/tmux"
 	"github.com/jinmu/eme/internal/tui"
 )
 
@@ -53,4 +56,58 @@ func normalizeMode(m string) (string, error) {
 			"Mode must be one of: off, manual, auto.",
 			"Run `eme caffeinate <session> --mode manual` (or auto/off).")
 	}
+}
+
+// emeExecutable resolves the running eme binary's absolute path. A seam for tests.
+var emeExecutable = os.Executable
+
+// armCaffeinate (re)starts the session's hidden caffeinate window in the given mode.
+// It first disarms any existing window so a mode change takes effect, then spawns a
+// fresh daemon by absolute eme path (PATH-independent). Bound to the tmux session:
+// when the session dies the window dies and the daemon's caffeinate child dies with
+// it. No-op off macOS.
+func armCaffeinate(sess *state.Session, mode string) error {
+	if !caffeinateSupportedFn() {
+		return nil
+	}
+	_ = disarmCaffeinate(sess) // drop any stale/previous-mode window first (best-effort)
+	bin, err := emeExecutable()
+	if err != nil {
+		return errors.New(errors.CodeCommandFailed,
+			"could not locate the eme binary to start caffeinate.",
+			err.Error(),
+			"Reinstall eme or report this if it persists.")
+	}
+	if _, err := tmux.NewWindowCmd(sess.TmuxName, caffeinateWindowName, sess.MainPath(),
+		bin, "caffeinate-daemon", sess.ID, "--mode", mode); err != nil {
+		return errors.New(errors.CodeCommandFailed,
+			"could not start the caffeinate window.",
+			err.Error(),
+			"Make sure the session's tmux server is reachable.")
+	}
+	return nil
+}
+
+// disarmCaffeinate kills the session's caffeinate window by name (best-effort: a
+// missing window is fine). Killing the window SIGHUPs the daemon + its caffeinate
+// child, releasing the assertion.
+func disarmCaffeinate(sess *state.Session) error {
+	return tmux.KillWindow(sess.TmuxName, caffeinateWindowName)
+}
+
+// setCaffeinate applies a normalized mode (off|manual|auto) to a session: it arms or
+// disarms the window FIRST (so persisted intent never claims a state tmux isn't in),
+// then records the intent and saves. off → "" intent.
+func setCaffeinate(s *state.State, sess *state.Session, mode string) error {
+	switch mode {
+	case "off":
+		_ = disarmCaffeinate(sess)
+		sess.CaffeinateMode = ""
+	case "manual", "auto":
+		if err := armCaffeinate(sess, mode); err != nil {
+			return err
+		}
+		sess.CaffeinateMode = mode
+	}
+	return saveState(s)
 }
