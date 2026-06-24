@@ -943,9 +943,9 @@ func (m *DashboardModel) peekBlock(inner int) []string {
 // previewBox renders the side preview as its own bordered box: a header (worktree · status
 // · age, plus a muted "quiet" tag) and the captured pane tail, clamped to the box height.
 func (m *DashboardModel) previewBox(width, height int) string {
-	inner := width - 4
-	if inner < 8 {
-		inner = 8
+	innerW := width - 4
+	if innerW < 1 {
+		innerW = 1
 	}
 	head := m.previewLabel
 	if w := m.selected(); w != nil {
@@ -957,7 +957,7 @@ func (m *DashboardModel) previewBox(width, height int) string {
 			head += " " + mutedStyle.Render("quiet")
 		}
 	}
-	rows := []string{clampWidth(titleStyle.Render(head), inner), clampWidth(mutedStyle.Render(strings.Repeat("─", inner)), inner)}
+	rows := []string{clampWidth(titleStyle.Render(head), innerW), clampWidth(mutedStyle.Render(strings.Repeat("─", innerW)), innerW)}
 	body := m.previewLines
 	if len(body) == 0 {
 		body = []string{mutedStyle.Render("(no output)")}
@@ -966,7 +966,7 @@ func (m *DashboardModel) previewBox(width, height int) string {
 		body = body[len(body)-max:] // keep the freshest tail
 	}
 	for _, ln := range body {
-		rows = append(rows, clampWidth(truncateWidth(ln, inner), inner))
+		rows = append(rows, clampWidth(truncateWidth(ln, innerW), innerW))
 	}
 	return panelStyle.Width(width - 2).Height(height - 2).Render(strings.Join(rows, "\n"))
 }

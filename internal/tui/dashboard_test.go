@@ -934,6 +934,31 @@ func TestDashboardViewNoLineWiderThanPopup(t *testing.T) {
 	if h := lipgloss.Height(v); h > 20 {
 		t.Errorf("height %d > 20: a long row must not wrap and push the border off", h)
 	}
+
+	// TestDashboardViewNoLineWiderThanPopup_PreviewOn: verify the invariant also holds
+	// when the side preview is open at a width >= previewMinWidth (72).
+	m2 := NewDashboard(views, nil)
+	m2.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m2.cursor = 1 // position on the worktree row
+	m2.SetPreview(func(sid, name string) ([]string, error) {
+		return []string{
+			"preview-line-very-long-that-could-overflow-if-not-truncated-correctly",
+			"line-2",
+		}, nil
+	})
+	m2.Update(runeKey('P')) // toggle preview on
+	if !m2.preview {
+		t.Fatal("preview should open at width 100 (>= previewMinWidth)")
+	}
+	v2 := m2.View()
+	for _, ln := range strings.Split(v2, "\n") {
+		if w := lipgloss.Width(ln); w > 100 {
+			t.Errorf("line width %d exceeds popup width 100 with preview ON: %q", w, ln)
+		}
+	}
+	if h := lipgloss.Height(v2); h > 20 {
+		t.Errorf("height %d > 20 with preview ON: preview must not overflow", h)
+	}
 }
 
 // TestDashboardViewKeepsCursorRowVisible: when the cursor sits past the visible window,
