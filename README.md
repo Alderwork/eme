@@ -74,6 +74,22 @@ eme doctor         # verify environment
 eme --version      # print version
 ```
 
+### Hooks upgrade note
+
+`eme hooks install` also stamps the moment each state changed (so the dashboard can show
+how long an agent has been waiting) and scopes `waiting` to real permission prompts and
+questions. If you installed eme's hooks before this, re-run `eme hooks install` once to
+upgrade — it rewrites only eme's own hooks and preserves everything else.
+
+In the dashboard: `s` floats the agents that need you to the top, `P` opens a live side
+preview of the selected agent (`p` is still a momentary peek). Configure the gone-quiet
+threshold in `~/.config/eme/config.toml`:
+
+```toml
+[status]
+quiet_after = "2m"   # dim a hooked agent that's been "working" this long; "0" disables
+```
+
 ## Configuration
 
 `~/.config/eme/config.toml`:
