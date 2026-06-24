@@ -1,8 +1,10 @@
 package state
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -106,5 +108,33 @@ func TestLoad_EmptyLayoutDefaultsToNestedBare(t *testing.T) {
 	}
 	if s.Sessions[0].Layout != LayoutNestedBare {
 		t.Errorf("Layout = %q, want nested-bare", s.Sessions[0].Layout)
+	}
+}
+
+func TestSession_CaffeinateModeRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	s := &State{Version: Version, Sessions: []Session{
+		{ID: "a-1", DisplayName: "a", Root: "/a", TmuxName: "a", CaffeinateMode: "auto"},
+	}}
+	if err := s.Save(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got.Sessions[0].CaffeinateMode != "auto" {
+		t.Fatalf("CaffeinateMode = %q, want auto", got.Sessions[0].CaffeinateMode)
+	}
+}
+
+func TestSession_CaffeinateOffOmitted(t *testing.T) {
+	b, err := json.Marshal(Session{ID: "a-1"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "caffeinate_mode") {
+		t.Fatalf("empty CaffeinateMode must be omitted, got %s", b)
 	}
 }
