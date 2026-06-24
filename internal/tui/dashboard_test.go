@@ -1091,8 +1091,8 @@ func TestTruncLeftWidth(t *testing.T) {
 		want string
 	}{
 		{"…/eme/gege", 80, "…/eme/gege"}, // fits → unchanged
-		{"abc", 3, "abc"},                 // exactly fits
-		{"abcdefghij", 5, "…ghij"},        // keep rightmost 4, prefix …
+		{"abc", 3, "abc"},                // exactly fits
+		{"abcdefghij", 5, "…ghij"},       // keep rightmost 4, prefix …
 		{"abc", 1, "…"},
 		{"abc", 0, ""},
 	}
@@ -1140,5 +1140,23 @@ func TestDashboardSchemaRowStaysPinnedWhenScrolled(t *testing.T) {
 	v := m.View()
 	if !strings.Contains(v, "location") {
 		t.Errorf("schema row should stay pinned (in the header) when the tree scrolls:\n%s", v)
+	}
+}
+
+func TestWorktreeLine_ShowsAge(t *testing.T) {
+	m := &DashboardModel{width: 100, height: 24}
+	w := WorktreeView{Name: "feat", Branch: "feat", Status: StatusWorking, AgeLabel: "12m", Location: "…/p/feat"}
+	line := m.worktreeLine(w, false, 90)
+	if !strings.Contains(line, "12m") {
+		t.Errorf("worktree row missing age cell: %q", line)
+	}
+}
+
+func TestSchemaLine_HasAgeLabel(t *testing.T) {
+	s := schemaLine(90)
+	for _, col := range []string{"status", "age", "worktree", "branch", "location"} {
+		if !strings.Contains(s, col) {
+			t.Errorf("schema row missing %q: %q", col, s)
+		}
 	}
 }

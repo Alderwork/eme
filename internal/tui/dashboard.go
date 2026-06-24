@@ -35,6 +35,9 @@ var (
 	rootStyle     = lipgloss.NewStyle().Foreground(theme.Muted)
 	branchStyle   = lipgloss.NewStyle().Foreground(theme.Muted)
 	locationStyle = lipgloss.NewStyle().Foreground(theme.Muted) // worktree dir; reference info, no hue
+	// ageStyle renders the age cell as muted reference info — a temporal qualifier on the
+	// status, never a hue of its own (DESIGN §5.3: age is chrome, not a signal channel).
+	ageStyle = lipgloss.NewStyle().Foreground(theme.Idle)
 
 	// selectedGutter marks the cursor row with a quiet, non-hue ▌ on the surface
 	// lift. Selection is a separate channel from the beacon: a background platform,
@@ -52,11 +55,12 @@ var (
 const (
 	colGutterW = 2  // cursor gutter ("▌ " or "  ")
 	colStatusW = 10 // status glyph + space + label padded to 8
+	colAgeW    = 4  // compact age in state ("12m"); blank for non-hooked/idle rows
 	colNameW   = 14
 	colBranchW = 16
 	colSep     = "  "
 	// wtPrefixW is the width consumed before the trailing location column.
-	wtPrefixW = colGutterW + colStatusW + len(colSep) + colNameW + len(colSep) + colBranchW + len(colSep)
+	wtPrefixW = colGutterW + colStatusW + len(colSep) + colAgeW + len(colSep) + colNameW + len(colSep) + colBranchW + len(colSep)
 )
 
 // rowKind distinguishes a session header row from a worktree row in the flattened,
@@ -705,6 +709,7 @@ func fitLine(left, right string, width int) string {
 func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) string {
 	// labels are ASCII and glyphs are width-1, so byte-format padding == colStatusW.
 	statusRaw := fmt.Sprintf("%s %-8s", w.Status.Glyph(), w.Status.Label())
+	ageRaw := padCell(w.AgeLabel, colAgeW)
 	nameRaw := padCell(w.Name, colNameW)
 	branchRaw := padCell(w.Branch, colBranchW)
 
@@ -731,6 +736,7 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 
 	row := gutter +
 		bg(statusStyle[w.Status]).Render(statusRaw) + sep +
+		bg(ageStyle).Render(ageRaw) + sep +
 		bg(textStyle).Render(nameRaw) + sep +
 		bg(branchStyle).Render(branchRaw) + sep +
 		locCell
@@ -749,6 +755,7 @@ func (m *DashboardModel) worktreeLine(w WorktreeView, selected bool, inner int) 
 func schemaLine(inner int) string {
 	row := strings.Repeat(" ", colGutterW) +
 		padCell("status", colStatusW) + colSep +
+		padCell("age", colAgeW) + colSep +
 		padCell("worktree", colNameW) + colSep +
 		padCell("branch", colBranchW) + colSep +
 		"location"
