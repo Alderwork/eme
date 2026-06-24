@@ -140,6 +140,9 @@ type SessionView struct {
 	// IsPlain marks a plain (non-git) project: the folder is run in place with no
 	// git worktree management. The dashboard gates the create-worktree action on
 	// it so a plain folder never spawns a child that can only fail.
-	IsPlain   bool
-	Worktrees []WorktreeView
+	IsPlain bool
+	// Caffeinate is the session's keep-awake intent ("", "manual", "auto"), used to
+	// render the header badge.
+	Caffeinate string
+	Worktrees  []WorktreeView
 }

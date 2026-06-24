@@ -15,12 +15,13 @@ const DefaultPickerMaxDepth = 3
 
 // Config holds user configuration for eme.
 type Config struct {
-	Agent    Agent       `toml:"agent"`
-	Picker   Picker      `toml:"picker"`
-	Worktree Worktree    `toml:"worktree"`
-	Tmux     Tmux        `toml:"tmux"`
-	Status   Status      `toml:"status"`
-	Agents   []AgentSpec `toml:"agents"`
+	Agent      Agent       `toml:"agent"`
+	Picker     Picker      `toml:"picker"`
+	Worktree   Worktree    `toml:"worktree"`
+	Tmux       Tmux        `toml:"tmux"`
+	Status     Status      `toml:"status"`
+	Caffeinate Caffeinate  `toml:"caffeinate"`
+	Agents     []AgentSpec `toml:"agents"`
 }
 
 // Status configures the agent-status signals.
@@ -44,6 +45,37 @@ func (c *Config) QuietAfterDuration() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// Caffeinate configures the per-session keep-awake feature (macOS only).
+type Caffeinate struct {
+	// Flags are passed to /usr/bin/caffeinate. Default "-i" prevents system idle
+	// sleep while leaving the display free to sleep. Space-separated.
+	Flags string `toml:"flags"`
+	// AutoGraceSeconds is how long auto-mode keeps asserting after the last
+	// "working" sample, so brief idle gaps between agent turns don't drop sleep
+	// protection. Default 60; negative clamps to 0.
+	AutoGraceSeconds int `toml:"auto_grace_seconds"`
+}
+
+// CaffeinateFlags returns the caffeinate flags as argv. Empty config → ["-i"].
+func (c *Config) CaffeinateFlags() []string {
+	f := strings.Fields(c.Caffeinate.Flags)
+	if len(f) == 0 {
+		return []string{"-i"}
+	}
+	return f
+}
+
+// AutoGraceDuration returns the auto-mode release grace. Default 60s; <0 → 0.
+func (c *Config) AutoGraceDuration() time.Duration {
+	if c.Caffeinate.AutoGraceSeconds < 0 {
+		return 0
+	}
+	if c.Caffeinate.AutoGraceSeconds == 0 {
+		return 60 * time.Second
+	}
+	return time.Duration(c.Caffeinate.AutoGraceSeconds) * time.Second
 }
 
 // Tmux configures how eme talks to tmux.
@@ -144,10 +176,11 @@ type Worktree struct {
 // Default returns a config with sensible defaults.
 func Default() *Config {
 	return &Config{
-		Agent:    Agent{Command: "opencode"},
-		Picker:   Picker{MaxDepth: DefaultPickerMaxDepth},
-		Worktree: Worktree{DirTemplate: "{repo}.worktrees"},
-		Status:   Status{QuietAfter: "2m"},
+		Agent:      Agent{Command: "opencode"},
+		Picker:     Picker{MaxDepth: DefaultPickerMaxDepth},
+		Worktree:   Worktree{DirTemplate: "{repo}.worktrees"},
+		Status:     Status{QuietAfter: "2m"},
+		Caffeinate: Caffeinate{Flags: "-i", AutoGraceSeconds: 60},
 		// Tmux.Socket defaults to "" (ambient: use your current tmux server).
 	}
 }

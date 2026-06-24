@@ -226,6 +226,18 @@ func TestBuildViews_DerivesAgeAndQuiet(t *testing.T) {
 	}
 }
 
+func TestBuildSessionViews_CarriesCaffeinateMode(t *testing.T) {
+	sessions := []state.Session{{
+		ID: "p-1", DisplayName: "p", Root: "/p", TmuxName: "p",
+		CaffeinateMode: "auto",
+		Worktrees:      []state.Worktree{{Name: "main", TmuxWindowID: "@1"}},
+	}}
+	views := buildSessionViews(sessions, map[string]tmux.PaneInfo{}, time.Now(), 0)
+	if len(views) != 1 || views[0].Caffeinate != "auto" {
+		t.Fatalf("Caffeinate = %q, want auto", views[0].Caffeinate)
+	}
+}
+
 func TestFormatAge(t *testing.T) {
 	cases := []struct {
 		d    time.Duration

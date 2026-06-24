@@ -44,6 +44,11 @@ type Session struct {
 	Worktrees           []Worktree `json:"worktrees"`
 	Layout              string     `json:"layout,omitempty"`
 	WorktreeDirOverride string     `json:"worktree_dir,omitempty"`
+	// CaffeinateMode is the session's keep-awake intent: "" (off), "manual"
+	// (assert for the whole session), or "auto" (assert only while an agent works).
+	// The hidden __eme_caffeinate tmux window is the enforcement; this is the
+	// display/intent record that `eme caffeinate` mutates.
+	CaffeinateMode string `json:"caffeinate_mode,omitempty"`
 }
 
 // State is the persisted runtime state for eme.
