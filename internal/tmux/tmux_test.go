@@ -64,9 +64,9 @@ func TestPanesSnapshot_ParsesEmeStateAndLastPane(t *testing.T) {
 	Runner, Socket = mock, ""
 	defer func() { Runner, Socket = oldRunner, oldSocket }()
 
-	format := "#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}"
+	format := "#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}\t#{@eme_state_at}"
 	// Last pane has an empty @eme_state + trailing tab, exactly the dropped-pane case.
-	out := "@1\t0\t0\tnode\twaiting\n@2\t0\t0\tzsh\t\n"
+	out := "@1\t0\t0\tnode\twaiting\t1750000000\n@2\t0\t0\tzsh\t\t\n"
 	mock.Set("tmux", []string{"list-panes", "-a", "-F", format}, out, "", nil)
 
 	snap, err := PanesSnapshot()
@@ -244,5 +244,32 @@ func TestCapturePane_EmptyPane(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("got %d lines %v, want 0 for a blank pane", len(got), got)
+	}
+}
+
+// TestParsePaneLine_ReadsEmeStateAt verifies that parsePaneLine reads the sixth
+// tab-separated field into PaneInfo.EmeStateAt as an int64 epoch timestamp.
+func TestParsePaneLine_ReadsEmeStateAt(t *testing.T) {
+	info, wid, ok := parsePaneLine("@5\t0\t0\tnode\tworking\t1750000000")
+	if !ok {
+		t.Fatal("expected a parsed pane")
+	}
+	if wid != "@5" {
+		t.Errorf("window id = %q, want @5", wid)
+	}
+	if info.EmeState != "working" {
+		t.Errorf("EmeState = %q, want working", info.EmeState)
+	}
+	if info.EmeStateAt != 1750000000 {
+		t.Errorf("EmeStateAt = %d, want 1750000000", info.EmeStateAt)
+	}
+}
+
+// TestParsePaneLine_MissingTimestampIsZero verifies that a pre-upgrade pane
+// with only 5 fields (missing @eme_state_at) parses successfully with EmeStateAt=0.
+func TestParsePaneLine_MissingTimestampIsZero(t *testing.T) {
+	info, _, ok := parsePaneLine("@5\t0\t0\tnode\tworking") // pre-upgrade pane, 5 fields
+	if !ok || info.EmeStateAt != 0 {
+		t.Fatalf("missing @eme_state_at must be 0, got ok=%v at=%d", ok, info.EmeStateAt)
 	}
 }

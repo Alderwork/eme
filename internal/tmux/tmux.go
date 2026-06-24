@@ -296,46 +296,58 @@ type PaneInfo struct {
 	DeadStatus int    // exit code when Dead; 0 otherwise
 	Command    string // pane_current_command — the foreground process (primary liveness signal)
 	EmeState   string // @eme_state pane user-option, pushed by an agent hook; "" when unset
+	EmeStateAt int64  // @eme_state_at epoch seconds, pushed alongside @eme_state; 0 when unset
 }
 
 // PanesSnapshot returns liveness for every pane on the server, keyed by window id.
 // One batched list-panes call replaces N per-worktree polls. A window maps to its
 // first pane (eme runs one pane per agent window).
 func PanesSnapshot() (map[string]PaneInfo, error) {
-	// The trailing #{@eme_state} reads a pane user-option an agent hook may push (see
-	// `eme hooks install`); it expands to "" when unset, so this is inert until hooks
-	// are installed and never changes behavior for un-hooked panes.
+	// The trailing #{@eme_state}/#{@eme_state_at} read pane user-options an agent hook may
+	// push (see `eme hooks install`); they expand to "" when unset, so this is inert until
+	// hooks are installed and never changes behavior for un-hooked panes.
 	out, _, err := tmux("list-panes", "-a", "-F",
-		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}")
+		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}\t#{@eme_state_at}")
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes -a: %w", err)
 	}
 	snap := make(map[string]PaneInfo)
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
+		info, wid, ok := parsePaneLine(line)
+		if !ok {
 			continue
 		}
-		f := strings.SplitN(line, "\t", 5)
-		if len(f) < 4 {
-			continue
-		}
-		wid := f[0]
 		if _, seen := snap[wid]; seen {
 			continue // first pane per window wins
-		}
-		info := PaneInfo{Dead: f[1] == "1", Command: f[3]}
-		// The 5th field (@eme_state) is read only when present: an unset option makes
-		// it empty, and the outer TrimSpace strips the last line's trailing tab, so the
-		// final pane legitimately arrives with 4 fields. Missing => EmeState "".
-		if len(f) >= 5 {
-			info.EmeState = strings.TrimSpace(f[4])
-		}
-		if info.Dead {
-			info.DeadStatus, _ = strconv.Atoi(strings.TrimSpace(f[2]))
 		}
 		snap[wid] = info
 	}
 	return snap, nil
+}
+
+// parsePaneLine parses one tab-separated list-panes row into a PaneInfo keyed by window id.
+// Trailing empty options (and the outer TrimSpace stripping a final tab) mean a line may
+// arrive with fewer than 6 fields; the optional @eme_state / @eme_state_at tail is read
+// only when present. ok is false for a blank line or one missing the structural fields.
+func parsePaneLine(line string) (PaneInfo, string, bool) {
+	if line == "" {
+		return PaneInfo{}, "", false
+	}
+	f := strings.SplitN(line, "\t", 6)
+	if len(f) < 4 {
+		return PaneInfo{}, "", false
+	}
+	info := PaneInfo{Dead: f[1] == "1", Command: f[3]}
+	if len(f) >= 5 {
+		info.EmeState = strings.TrimSpace(f[4])
+	}
+	if len(f) >= 6 {
+		info.EmeStateAt, _ = strconv.ParseInt(strings.TrimSpace(f[5]), 10, 64)
+	}
+	if info.Dead {
+		info.DeadStatus, _ = strconv.Atoi(strings.TrimSpace(f[2]))
+	}
+	return info, f[0], true
 }
 
 // SetAgentState stamps the @eme_state pane user-option — the channel agent hooks use
