@@ -27,6 +27,50 @@ func hooksMap(t *testing.T, root map[string]json.RawMessage) map[string][]claude
 	return hm
 }
 
+// TestEmeHookCommand_StampsStateAndTimestamp verifies that emeHookCommand produces a
+// single tmux call that sets both @eme_state and @eme_state_at in one invocation.
+func TestEmeHookCommand_StampsStateAndTimestamp(t *testing.T) {
+	cmd := emeHookCommand("working")
+	if !strings.Contains(cmd, emeHookMarker+" working") {
+		t.Errorf("command missing %q working stamp: %s", emeHookMarker, cmd)
+	}
+	if !strings.Contains(cmd, emeHookAtMarker) {
+		t.Errorf("command missing %q timestamp stamp: %s", emeHookAtMarker, cmd)
+	}
+	if !strings.Contains(cmd, `$(date +%s)`) {
+		t.Errorf("command missing unix-timestamp sub-command: %s", cmd)
+	}
+	if !strings.HasPrefix(cmd, `[ -n "$TMUX" ]`) || !strings.HasSuffix(cmd, `|| true`) {
+		t.Errorf("command must guard $TMUX and always exit 0, got: %s", cmd)
+	}
+	// Both options must be in one tmux call separated by \;
+	if !strings.Contains(cmd, `\;`) {
+		t.Errorf("command must use \\; to join the two set-option calls in one tmux invocation: %s", cmd)
+	}
+}
+
+// TestEmeHookEvents_FourEventsWithMatchers verifies the emeHookEvents slice has exactly
+// four entries with the expected matchers (empty or non-empty as designed).
+func TestEmeHookEvents_FourEventsWithMatchers(t *testing.T) {
+	if len(emeHookEvents) != 4 {
+		t.Fatalf("emeHookEvents len = %d, want 4", len(emeHookEvents))
+	}
+	want := []struct{ Event, Matcher, State string }{
+		{"UserPromptSubmit", "", "working"},
+		{"Notification", "permission_prompt", "waiting"},
+		{"PreToolUse", "AskUserQuestion", "waiting"},
+		{"Stop", "", "idle"},
+	}
+	for i, w := range want {
+		got := emeHookEvents[i]
+		if got.Event != w.Event || got.Matcher != w.Matcher || got.State != w.State {
+			t.Errorf("emeHookEvents[%d] = {%q, %q, %q}, want {%q, %q, %q}",
+				i, got.Event, got.Matcher, got.State,
+				w.Event, w.Matcher, w.State)
+		}
+	}
+}
+
 // TestMergeClaudeHooks_AddsAllThreeIntoEmptySettings: a fresh settings file gains the
 // three eme events, each a command that stamps @eme_state.
 func TestMergeClaudeHooks_AddsAllThreeIntoEmptySettings(t *testing.T) {

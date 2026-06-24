@@ -21,22 +21,34 @@ import (
 //
 // The command is written to always exit 0 (a non-zero UserPromptSubmit hook could
 // disrupt the agent) and to no-op outside tmux.
-const emeHookMarker = "@eme_state"
+const (
+	emeHookMarker   = "@eme_state"
+	emeHookAtMarker = "@eme_state_at"
+)
 
-// emeHookEvents maps each Claude Code hook event to the state it stamps. Ordered for
-// deterministic install output. Two caveats are inherent to the events Claude exposes:
-//   - Notification also fires for non-permission nudges (e.g. a ~60s idle ping), so a
-//     brief `waiting` can show during active work until the next event corrects it.
-//   - Stop does NOT fire on a user interrupt (Esc), so an interrupted turn can leave a
-//     transient stale `working` that the next prompt (UserPromptSubmit) clears.
-var emeHookEvents = []struct{ Event, State string }{
-	{"UserPromptSubmit", "working"}, // user submitted a prompt → the agent is now working
-	{"Notification", "waiting"},     // agent needs permission / input → waiting for you
-	{"Stop", "idle"},                // agent finished its turn → back to idle
+// emeHookEvents maps each Claude Code hook event to the matcher that scopes it and the
+// state it stamps. Ordered for deterministic install output. Tighter matchers (adopted
+// from craftzdog/tmux-claude-session-manager) make `waiting` mean a real permission
+// prompt or question rather than any Notification (a ~60s idle ping no longer trips it):
+//   - Notification + permission_prompt → waiting (only on a real permission request)
+//   - PreToolUse + AskUserQuestion     → waiting (the agent is asking you something)
+//
+// Stop still does NOT fire on a user interrupt (Esc), so an interrupted turn can leave a
+// transient stale `working` (and a stale @eme_state_at) that the next UserPromptSubmit clears.
+var emeHookEvents = []struct{ Event, Matcher, State string }{
+	{"UserPromptSubmit", "", "working"},              // user submitted a prompt → working
+	{"Notification", "permission_prompt", "waiting"}, // real permission prompt → waiting
+	{"PreToolUse", "AskUserQuestion", "waiting"},     // asking you a question → waiting
+	{"Stop", "", "idle"},                             // agent finished its turn → idle
 }
 
+// emeHookCommand stamps both the state and the moment it changed, in ONE tmux call (the
+// literal `\;` is a tmux command separator), so eme reads a consistent (state, time) pair.
+// It always exits 0 (a non-zero UserPromptSubmit hook could disrupt the agent) and no-ops
+// outside tmux. eme reads the values back via #{@eme_state} / #{@eme_state_at}.
 func emeHookCommand(state string) string {
-	return `[ -n "$TMUX" ] && tmux set-option -p -t "$TMUX_PANE" ` + emeHookMarker + ` ` + state + ` || true`
+	return `[ -n "$TMUX" ] && tmux set-option -p -t "$TMUX_PANE" ` + emeHookMarker + ` ` + state +
+		` \; set-option -p -t "$TMUX_PANE" ` + emeHookAtMarker + ` "$(date +%s)" || true`
 }
 
 // claudeHookCommand / claudeHookGroup model Claude Code's settings.json hooks schema:
