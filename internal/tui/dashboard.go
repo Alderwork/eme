@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"time"
 
@@ -102,10 +103,14 @@ type DashboardModel struct {
 	// SessionID) so the fold state survives reloads and reorders — the same identity
 	// principle the sticky cursor uses (ARCH-5).
 	collapsed map[string]bool
-	width     int
-	height    int
-	notice    string
-	pending   *killTarget
+	// sortByAttention floats waiting/crashed/quiet worktrees to the top WITHIN each session
+	// (off by default, toggled by `s`). rebuildRows is the single ordering authority, so the
+	// mode survives every reload/tick automatically; applyViews keeps the cursor on identity.
+	sortByAttention bool
+	width           int
+	height          int
+	notice          string
+	pending         *killTarget
 	// lastDelete records the project a plain delete was just dispatched for, so an
 	// unpushed-history refusal coming back from the child can be turned into the
 	// escalated "delete anyway" confirm instead of a dead-end error notice.
@@ -168,7 +173,7 @@ func (m *DashboardModel) rebuildRows() {
 		if m.isCollapsed(si) {
 			continue
 		}
-		for wi := range m.views[si].Worktrees {
+		for _, wi := range m.worktreeOrder(si) {
 			m.rows = append(m.rows, rowRef{kind: rowWorktree, session: si, worktree: wi})
 		}
 	}
@@ -178,6 +183,60 @@ func (m *DashboardModel) rebuildRows() {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+}
+
+// worktreeOrder returns session si's worktree indices in render order: state order by
+// default, or attention-first when sortByAttention is on — crashed < waiting < quiet <
+// working < idle < exited, then longest-in-state first (oldest StateChangedAt; unknown
+// age last). Stable, and never mutates the view-model.
+func (m *DashboardModel) worktreeOrder(si int) []int {
+	wts := m.views[si].Worktrees
+	idx := make([]int, len(wts))
+	for i := range idx {
+		idx[i] = i
+	}
+	if !m.sortByAttention {
+		return idx
+	}
+	sort.SliceStable(idx, func(a, b int) bool {
+		wa, wb := wts[idx[a]], wts[idx[b]]
+		ra, rb := attentionRank(wa.Status, wa.Quiet), attentionRank(wb.Status, wb.Quiet)
+		if ra != rb {
+			return ra < rb
+		}
+		return olderFirst(wa.StateChangedAt, wb.StateChangedAt)
+	})
+	return idx
+}
+
+// attentionRank orders worktrees so the ones that need you float up (lower = higher).
+func attentionRank(s AgentStatus, quiet bool) int {
+	switch {
+	case s == StatusCrashed:
+		return 0
+	case s == StatusWaiting:
+		return 1
+	case quiet:
+		return 2
+	case s == StatusWorking:
+		return 3
+	case s == StatusIdle:
+		return 4
+	default:
+		return 5
+	}
+}
+
+// olderFirst reports whether a sorts before b for the age tiebreak: a known, older state
+// change ranks above a newer one (longest-stuck first); an unknown (zero) time sorts last.
+func olderFirst(a, b time.Time) bool {
+	if a.IsZero() != b.IsZero() {
+		return !a.IsZero()
+	}
+	if a.IsZero() {
+		return false
+	}
+	return a.Before(b)
 }
 
 // sessionKey is the stable identity used to track a session's fold state across
@@ -399,6 +458,8 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "p":
 			m.togglePeek()
+		case "s":
+			m.toggleSortMode()
 		case "enter", "o":
 			if r := m.currentRow(); r != nil && r.kind == rowSession {
 				m.closePeek()
@@ -524,6 +585,9 @@ func (m *DashboardModel) View() string {
 
 	// Header (2 rows): branding + rhyme (left), the waiting/crashed tally (right), a rule.
 	left := titleStyle.Render("eme") + "  " + rhymeStyle.Render("eeny · meeny · miny · moe")
+	if m.sortByAttention {
+		left += "  " + mutedStyle.Render("· sort: attention")
+	}
 	header := []string{
 		clampWidth(fitLine(left, m.tally(), inner), inner),
 		clampWidth(mutedStyle.Render(strings.Repeat("─", inner)), inner),
@@ -555,7 +619,7 @@ func (m *DashboardModel) View() string {
 	}
 	help := "↑↓/jk move · ←→/hl fold · ↵ open · n new · d kill · ? more · q quit"
 	if m.showHelp {
-		help = "↑↓/jk move · ←→/hl fold · ↵/o open · p peek · n new · c worktree · a agent · A pick · x clean · d kill · q quit · ?"
+		help = "↑↓/jk move · ←→/hl fold · ↵/o open · p peek · n new · c worktree · a agent · A pick · x clean · s sort · d kill · q quit · ?"
 	}
 	bottom = append(bottom, wrapStyled(helpStyle, help, inner)...)
 
@@ -1022,23 +1086,10 @@ func (m *DashboardModel) tickReload() {
 	m.applyViews(views)
 }
 
-// applyViews swaps in a fresh view-model while keeping the cursor on the same row by
-// identity — a session header by its session key, a worktree by (session, worktree) —
-// so an auto-refresh never makes the selection jump under the user (ARCH-5). Falls
-// back to the clamped index (from rebuildRows) when the row is gone.
-func (m *DashboardModel) applyViews(views []SessionView) {
-	var wantSession string       // set when the cursor was on a session header
-	var wantSID, wantName string // set when the cursor was on a worktree
-	if r := m.currentRow(); r != nil {
-		if r.kind == rowSession {
-			wantSession = sessionKey(m.views[r.session])
-		} else {
-			w := m.views[r.session].Worktrees[r.worktree]
-			wantSID, wantName = w.SessionID, w.Name
-		}
-	}
-	m.views = views
-	m.rebuildRows()
+// restoreCursorByIdentity points the cursor at the row matching the given identity (a
+// session header by wantSession, or a worktree by wantSID+wantName), reconciling the peek;
+// if none matches, the clamped index from rebuildRows stands and the peek is dropped.
+func (m *DashboardModel) restoreCursorByIdentity(wantSession, wantSID, wantName string) {
 	for i, r := range m.rows {
 		switch r.kind {
 		case rowSession:
@@ -1057,9 +1108,49 @@ func (m *DashboardModel) applyViews(views []SessionView) {
 			}
 		}
 	}
-	// The previously selected row is gone; the cursor fell back to a clamped index, so a
-	// standing peek now points at the wrong worktree (or none) — drop it.
 	m.reconcilePeek()
+}
+
+// toggleSortMode flips attention-first sort, rebuilds, and keeps the cursor on the same
+// worktree, with a transient confirmation in the notice line.
+func (m *DashboardModel) toggleSortMode() {
+	var wantSession, wantSID, wantName string
+	if r := m.currentRow(); r != nil {
+		if r.kind == rowSession {
+			wantSession = sessionKey(m.views[r.session])
+		} else {
+			w := m.views[r.session].Worktrees[r.worktree]
+			wantSID, wantName = w.SessionID, w.Name
+		}
+	}
+	m.sortByAttention = !m.sortByAttention
+	m.rebuildRows()
+	m.restoreCursorByIdentity(wantSession, wantSID, wantName)
+	if m.sortByAttention {
+		m.notice = "sort: attention-first (waiting/crashed up)"
+	} else {
+		m.notice = "sort: default order"
+	}
+}
+
+// applyViews swaps in a fresh view-model while keeping the cursor on the same row by
+// identity — a session header by its session key, a worktree by (session, worktree) —
+// so an auto-refresh never makes the selection jump under the user (ARCH-5). Falls
+// back to the clamped index (from rebuildRows) when the row is gone.
+func (m *DashboardModel) applyViews(views []SessionView) {
+	var wantSession string       // set when the cursor was on a session header
+	var wantSID, wantName string // set when the cursor was on a worktree
+	if r := m.currentRow(); r != nil {
+		if r.kind == rowSession {
+			wantSession = sessionKey(m.views[r.session])
+		} else {
+			w := m.views[r.session].Worktrees[r.worktree]
+			wantSID, wantName = w.SessionID, w.Name
+		}
+	}
+	m.views = views
+	m.rebuildRows()
+	m.restoreCursorByIdentity(wantSession, wantSID, wantName)
 }
 
 // carryDiffStats copies the diff columns from src into dst by worktree identity, so

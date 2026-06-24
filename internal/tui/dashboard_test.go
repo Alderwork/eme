@@ -3,8 +3,10 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,6 +14,15 @@ import (
 
 	emeerrors "github.com/jinmu/eme/internal/errors"
 )
+
+// names returns a slice of worktree names in the order given by idx, for test diagnostics.
+func names(wts []WorktreeView, idx []int) []string {
+	out := make([]string, len(idx))
+	for i, wi := range idx {
+		out[i] = wts[wi].Name
+	}
+	return out
+}
 
 // manyViews builds sessions x perSession worktrees with globally-unique names, for the
 // overflow/viewport tests.
@@ -1174,5 +1185,56 @@ func TestQuiet_DoesNotCountAsAttention(t *testing.T) {
 	// (which drives the header tally and the ambient ✗/● segment).
 	if StatusWorking.NeedsAttention() {
 		t.Error("working must never need attention; quiet is layered on working, not a status")
+	}
+}
+
+func TestAttentionRank(t *testing.T) {
+	order := []struct {
+		s     AgentStatus
+		quiet bool
+		rank  int
+	}{
+		{StatusCrashed, false, 0}, {StatusWaiting, false, 1}, {StatusWorking, true, 2},
+		{StatusWorking, false, 3}, {StatusIdle, false, 4}, {StatusExited, false, 5},
+	}
+	for _, o := range order {
+		if got := attentionRank(o.s, o.quiet); got != o.rank {
+			t.Errorf("attentionRank(%v,%v) = %d, want %d", o.s, o.quiet, got, o.rank)
+		}
+	}
+}
+
+func TestWorktreeOrder_AttentionFirstWithAgeTiebreak(t *testing.T) {
+	t0 := time.Unix(1_750_000_000, 0)
+	m := &DashboardModel{views: []SessionView{{Worktrees: []WorktreeView{
+		{Name: "idle", Status: StatusIdle},
+		{Name: "crash", Status: StatusCrashed},
+		{Name: "wait-new", Status: StatusWaiting, StateChangedAt: t0.Add(60 * time.Second)},
+		{Name: "wait-old", Status: StatusWaiting, StateChangedAt: t0}, // older → higher
+	}}}}
+	// default: identity order
+	if got := m.worktreeOrder(0); !reflect.DeepEqual(got, []int{0, 1, 2, 3}) {
+		t.Fatalf("default order = %v, want [0 1 2 3]", got)
+	}
+	m.sortByAttention = true
+	got := m.worktreeOrder(0)
+	want := []int{1, 3, 2, 0} // crash, wait-old (longest), wait-new, idle
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("attention order = %v (names %s), want %v", got, names(m.views[0].Worktrees, got), want)
+	}
+}
+
+func TestToggleSort_KeepsCursorOnIdentity(t *testing.T) {
+	m := &DashboardModel{views: []SessionView{{Worktrees: []WorktreeView{
+		{Name: "idle", SessionID: "s", Status: StatusIdle},
+		{Name: "crash", SessionID: "s", Status: StatusCrashed},
+	}}}, collapsed: map[string]bool{}}
+	m.rebuildRows()
+	// put the cursor on "idle" (row 1: row 0 is the session header)
+	m.cursor = 1
+	before := m.selected().Name
+	m.toggleSortMode()
+	if m.selected() == nil || m.selected().Name != before {
+		t.Errorf("cursor jumped off %q after sort toggle", before)
 	}
 }
