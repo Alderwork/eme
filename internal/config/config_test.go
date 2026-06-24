@@ -120,6 +120,33 @@ func TestQuietAfterDuration(t *testing.T) {
 	}
 }
 
+func TestCaffeinateDefaults(t *testing.T) {
+	c := Default()
+	if got := c.CaffeinateFlags(); len(got) != 1 || got[0] != "-i" {
+		t.Fatalf("CaffeinateFlags default = %v, want [-i]", got)
+	}
+	if got := c.AutoGraceDuration(); got != 60*time.Second {
+		t.Fatalf("AutoGraceDuration default = %v, want 60s", got)
+	}
+}
+
+func TestCaffeinateFlagsSplit(t *testing.T) {
+	c := Default()
+	c.Caffeinate.Flags = "-i -s"
+	got := c.CaffeinateFlags()
+	if len(got) != 2 || got[0] != "-i" || got[1] != "-s" {
+		t.Fatalf("CaffeinateFlags = %v, want [-i -s]", got)
+	}
+}
+
+func TestAutoGraceNonNegative(t *testing.T) {
+	c := Default()
+	c.Caffeinate.AutoGraceSeconds = -5
+	if got := c.AutoGraceDuration(); got != 0 {
+		t.Fatalf("AutoGraceDuration(-5) = %v, want 0", got)
+	}
+}
+
 // TestLoad_PreservesConfiguredSocket checks that an explicit [tmux] socket is
 // honored, and that omitting it leaves ambient mode ("") rather than forcing a
 // pinned server.
