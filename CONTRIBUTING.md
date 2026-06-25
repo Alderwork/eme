@@ -2,6 +2,9 @@
 
 Thank you for your interest in contributing!
 
+By participating, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md).
+CI runs `go build`, `go vet`, and `go test` on every push and pull request.
+
 ## Getting started
 
 1. Fork the repository.

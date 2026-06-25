@@ -18,7 +18,8 @@ Add to `~/.tmux.conf`:
 bind-key a display-popup -E -w 80% -h 80% eme
 ```
 
-Reload with `tmux source-file ~/.tmux.conf`.
+Reload with `tmux source-file ~/.tmux.conf`. See [`examples/tmux.conf`](../examples/tmux.conf)
+for the binding and [`examples/config.toml`](../examples/config.toml) for a fully-annotated config.
 
 ## Your first project
 
@@ -31,17 +32,31 @@ Reload with `tmux source-file ~/.tmux.conf`.
 ## CLI commands
 
 ```text
-eme                # dashboard
-eme new [folder]   # create project + main worktree
-eme new --worktree <session> [name]  # create worktree
+eme                                  # dashboard
+eme new [folder]                     # create project + main worktree
+eme new --worktree <session> [name]  # create a worktree in an existing session
 eme switch <session> [worktree]      # switch window
-eme kill <session> [worktree]        # remove (needs --force)
-eme agent <session> [worktree]       # toggle agent
-eme agent <session> [worktree] --pick # choose the worktree's agent
+eme kill <session> [worktree] --force  # remove a worktree, or a whole session
+eme clean <session> [worktree]       # revive a crashed/exited pane back to idle
+eme agent <session> [worktree]       # toggle the agent
+eme agent <session> [worktree] --pick  # choose the worktree's agent from the catalog
 eme caffeinate <session> --mode manual|auto|off  # keep the Mac awake (macOS)
-eme doctor         # verify environment
-eme --version      # print version
+eme status --tmux                    # ambient tmux status-bar segment
+eme hooks install | uninstall        # agent status hooks (Claude Code; opt-in)
+eme forget <session>                 # stop managing a project (disk + tmux untouched)
+eme doctor [folder]                  # verify environment / classify a folder
+eme --version                        # print version
 ```
+
+### Useful flags
+
+- `--dry-run` — on `new` / `switch` / `kill` / `agent`: print the planned tmux/git actions without running them.
+- `--verbose` — global: print every external command eme runs to stderr.
+- `--config <path>` / `--state <path>` — global: override the config / state file locations.
+- `eme new --agent <cmd>` — launch a specific agent non-interactively (`none` for a bare shell), skipping the picker.
+- `eme new --convert <clone>` — losslessly restructure an existing normal clone into eme's nested-bare layout (keeps a backup; repos with submodules are refused — adopt them in place instead).
+- `eme agent --set <cmd>` — set and launch a specific agent for the worktree without the picker.
+- `eme kill --force-unpushed` — also delete a nested-bare project whose history is on no remote (implies `--force`).
 
 ## Configuration
 
@@ -58,9 +73,27 @@ command = "claude --resume"
 [caffeinate]                # keep-awake (macOS); see "Keeping the Mac awake" below
 flags = "-i"               # caffeinate flags; -i blocks idle system sleep (display still sleeps)
 auto_grace_seconds = 60    # auto mode: stay awake this long after the last "working" sample
+
+[tmux]
+# socket = "eme"           # pin all tmux ops to one dedicated server (tmux -L eme); default: ambient
+
+[status]
+quiet_after = "2m"          # dim a hooked agent "working" longer than this; "0" disables
+
+[picker]
+# max_depth = 4            # how deep the new-project folder picker scans
+# roots = ["~/src"]        # extra directories to scan for projects
+
+[worktree]
+# dir_template = "{repo}.worktrees"  # where worktrees for an adopted in-place clone are created
 ```
 
 You can override the agent per folder or per worktree from the dashboard.
+
+### Environment variables
+
+- `EME_TMUX_SOCKET=<name>` — pin all tmux operations to one dedicated server (`tmux -L <name>`); same as `[tmux] socket`.
+- `EME_THEME=light|dark` — force the color theme when eme can't detect the terminal background (e.g. inside some tmux popups).
 
 ## Dashboard keys
 
@@ -82,6 +115,10 @@ The tree uses vim/nvim-style motions — sessions fold like a file tree.
 | `w` | Cycle the session's keep-awake: `off → manual → auto → off` (macOS) |
 | `?` | Toggle help |
 | `q` / `Esc` | Quit |
+
+After `d`, a confirm prompt appears: `y` removes the worktree (or whole project) and its
+files · `f` forgets the project but keeps its files on disk · `D` force-deletes a project
+whose history is on no remote.
 
 ## Creating a worktree (`c`)
 

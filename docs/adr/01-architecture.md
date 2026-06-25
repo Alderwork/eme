@@ -99,7 +99,7 @@ This keeps error messages consistent and makes `--verbose` output and automated 
 
 The dashboard is a Bubble Tea program. When invoked from inside tmux, it runs in a tmux popup. Outside tmux, it runs full-screen.
 
-Before starting, eme reads the popup dimensions from tmux so the program can size itself correctly and avoid resize/input conflicts.
+The popup's size is set by the tmux `display-popup` binding (`-w`/`-h`). The Bubble Tea program runs on the alternate screen and sizes itself to that area from the terminal's reported size and tmux resize events, so there are no resize/input conflicts.
 
 ### 8. Session IDs are unique and collision-resistant
 
@@ -224,7 +224,7 @@ A second-opinion review surfaced the following issues, which are addressed above
 2. **Session basename collisions** — unique session IDs added (Decision 8).
 3. **Agent detection brittleness** — kept explicit PID tracking as primary; pane title as fallback; status documented as best-effort (Decision 5).
 4. **1-second cache value** — kept as single-invocation optimization; correctness relies on reconciliation, not cache (Decision 4).
-5. **Popup input conflicts** — read popup dimensions before starting TUI (Decision 7).
+5. **Popup input conflicts** — the TUI runs on the alternate screen and tracks tmux resize events (Decision 7).
 6. **Ambiguous `<name>` argument** — resolved by unique session IDs and ambiguous-basename picker (Decision 8).
 7. **Premature migration framework** — deferred; only version field kept (Decision 14).
 8. **Tmux socket reachability** — doctor checks server reachability and socket path (Decision 11 and `doctor`).
