@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jinmu/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/runner"
 )
 
 // Runner is the command runner used by this package. Tests can replace it.

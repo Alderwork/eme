@@ -4,10 +4,12 @@
 # subagent-driven-development scratch
 .superpowers/
 
-# local docs — keep most local, but publish usage.md + ADRs in the public repo
+# local docs — keep most local, but publish usage.md + ADRs + the brand kit
 /docs/*
 !/docs/usage.md
 !/docs/adr/
+!/docs/brand/
+docs/brand/.build/
 
 .gstack/
 

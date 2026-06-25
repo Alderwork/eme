@@ -10,13 +10,13 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 
-	"github.com/jinmu/eme/internal/config"
-	"github.com/jinmu/eme/internal/errors"
-	"github.com/jinmu/eme/internal/git"
-	"github.com/jinmu/eme/internal/session"
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tmux"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/config"
+	"github.com/JinmuGo/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/git"
+	"github.com/JinmuGo/eme/internal/session"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 var (

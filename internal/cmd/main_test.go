@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jinmu/eme/internal/config"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/config"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 // TestMain gives the cmd package the production-shaped globals it gets at runtime from

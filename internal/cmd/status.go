@@ -6,9 +6,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jinmu/eme/internal/tmux"
-	"github.com/jinmu/eme/internal/tui"
-	"github.com/jinmu/eme/internal/tui/theme"
+	"github.com/JinmuGo/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/tui/theme"
 )
 
 var statusTmux bool

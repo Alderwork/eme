@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jinmu/eme/internal/config"
-	emeerrors "github.com/jinmu/eme/internal/errors"
-	"github.com/jinmu/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/config"
+	emeerrors "github.com/JinmuGo/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/state"
 )
 
 // TestResolveTmuxSocket_Precedence locks the order EME_TMUX_SOCKET > config,

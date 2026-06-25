@@ -7,7 +7,7 @@
 ## Install
 
 ```bash
-go install github.com/jinmu/eme@latest
+go install github.com/JinmuGo/eme@latest
 ```
 
 ## Bind tmux

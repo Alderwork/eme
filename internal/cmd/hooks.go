@@ -11,7 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/jinmu/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/errors"
 )
 
 // Agent hooks let an agent PUSH its real state into the pane so eme reads it as ground

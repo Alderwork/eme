@@ -1,6 +1,16 @@
-# eme
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/hero-dark.png">
+    <img src="docs/brand/hero.png" alt="eme — mission control for your AI coding agents" width="720">
+  </picture>
+</p>
 
-> Eeny, meeny, miny, moe.
+<p align="center">
+  <a href="https://pkg.go.dev/github.com/JinmuGo/eme"><img src="https://pkg.go.dev/badge/github.com/JinmuGo/eme.svg" alt="Go Reference"></a>
+  <a href="https://github.com/JinmuGo/eme/actions/workflows/ci.yml"><img src="https://github.com/JinmuGo/eme/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://goreportcard.com/report/github.com/JinmuGo/eme"><img src="https://goreportcard.com/badge/github.com/JinmuGo/eme" alt="Go Report Card"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 **Mission control for your AI coding agents.** Which agent needs you? eme counts them out.
 
@@ -9,7 +19,7 @@
 ## Install
 
 ```bash
-go install github.com/jinmu/eme@latest
+go install github.com/JinmuGo/eme@latest
 ```
 
 Make sure `$GOPATH/bin` is on your `PATH`.

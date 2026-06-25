@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jinmu/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/runner"
 )
 
 // TestClassify_RealGit_BareGreenfieldNormal exercises Classify against REAL git

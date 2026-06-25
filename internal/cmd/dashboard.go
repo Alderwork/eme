@@ -8,9 +8,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tmux"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 func runDashboard() error {

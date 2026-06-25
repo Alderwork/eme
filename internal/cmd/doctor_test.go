@@ -3,7 +3,7 @@ package cmd
 import (
 	"testing"
 
-	"github.com/jinmu/eme/internal/git"
+	"github.com/JinmuGo/eme/internal/git"
 )
 
 func TestKindLabel(t *testing.T) {

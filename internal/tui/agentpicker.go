@@ -6,7 +6,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jinmu/eme/internal/tui/theme"
+	"github.com/JinmuGo/eme/internal/tui/theme"
 )
 
 // dialogStyle frames the picker as a centered modal — the same rounded border in the

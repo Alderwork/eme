@@ -1,4 +1,4 @@
-module github.com/jinmu/eme
+module github.com/JinmuGo/eme
 
 go 1.26.2
 

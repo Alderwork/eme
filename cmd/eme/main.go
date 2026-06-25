@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jinmu/eme/internal/cmd"
-	"github.com/jinmu/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/cmd"
+	"github.com/JinmuGo/eme/internal/errors"
 )
 
 func main() {

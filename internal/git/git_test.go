@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jinmu/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/runner"
 )
 
 func TestWorktreeAdd_NewBranch(t *testing.T) {

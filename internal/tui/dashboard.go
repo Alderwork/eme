@@ -13,8 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/jinmu/eme/internal/errors"
-	"github.com/jinmu/eme/internal/tui/theme"
+	"github.com/JinmuGo/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/tui/theme"
 )
 
 // Styles map DESIGN.md roles to lipgloss. titleStyle, cursorStyle, mutedStyle,

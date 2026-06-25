@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jinmu/eme/internal/errors"
-	"github.com/jinmu/eme/internal/git"
-	"github.com/jinmu/eme/internal/runner"
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tmux"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/errors"
+	"github.com/JinmuGo/eme/internal/git"
+	"github.com/JinmuGo/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 func TestDirIsEffectivelyEmpty(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/jinmu/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/runner"
 )
 
 // TestTmux_PinsSocketWithDashL verifies that when a socket is pinned every tmux

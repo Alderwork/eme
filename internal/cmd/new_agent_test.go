@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 // TestMaybeOnboardWorktreeAgent_SetsOverrideAndLaunches: a freshly created worktree gets

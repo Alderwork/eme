@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jinmu/eme/internal/git"
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tmux"
-	"github.com/jinmu/eme/internal/tui"
+	"github.com/JinmuGo/eme/internal/git"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/tui"
 )
 
 // buildSessionViews maps state into render-ready dashboard views with the FULL

@@ -3,9 +3,9 @@ package cmd
 import (
 	"testing"
 
-	"github.com/jinmu/eme/internal/runner"
-	"github.com/jinmu/eme/internal/state"
-	"github.com/jinmu/eme/internal/tmux"
+	"github.com/JinmuGo/eme/internal/runner"
+	"github.com/JinmuGo/eme/internal/state"
+	"github.com/JinmuGo/eme/internal/tmux"
 )
 
 // paneSnapFormat mirrors the -F format tmux.PanesSnapshot uses; the mock key must
