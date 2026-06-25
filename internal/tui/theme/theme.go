@@ -60,9 +60,9 @@ var (
 
 	// Neutrals — inherit the terminal where they can.
 	Text    lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#D7DBE0", Light: "#1C1E22"} // names, titles, baseline
-	Muted   lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#7C8693", Light: "#5A626C"} // branches, help, rhyme, chrome
-	Exited  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#98A0AB", Light: "#6B7280"} // clean finished agent
-	Idle    lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#5A626C", Light: "#80868F"} // never ran; recedes hardest
+	Muted   lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#969FAD", Light: "#5A626C"} // branches, help, rhyme, chrome
+	Exited  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#A6AEB9", Light: "#6B7280"} // clean finished agent
+	Idle    lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#6C7480", Light: "#80868F"} // never ran; recedes hardest
 	Surface lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#181C22", Light: "#ECECEA"} // selected-row lift (a platform, not a hue)
 	Border  lipgloss.TerminalColor = lipgloss.AdaptiveColor{Dark: "#2A313A", Light: "#D3D6DB"} // panel border + rule
 )

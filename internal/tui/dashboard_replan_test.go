@@ -129,11 +129,11 @@ func TestCaffeinateBadgeIsMutedNotWorking(t *testing.T) {
 	if !strings.Contains(v, "(caf~)") {
 		t.Errorf("the auto caffeinate badge should render\n%s", v)
 	}
-	// working dark hue #5E86A8 = rgb(94,134,168); muted dark #7C8693 = rgb(124,134,147).
+	// working dark hue #5E86A8 = rgb(94,134,168); muted dark #969FAD = rgb(150,159,173).
 	if strings.Contains(v, "38;2;94;134;168") {
 		t.Errorf("the caffeinate badge must not wear the reserved working hue\n%s", v)
 	}
-	if !strings.Contains(v, "38;2;124;134;147") {
+	if !strings.Contains(v, "38;2;150;159;173") {
 		t.Errorf("the caffeinate badge should render in muted\n%s", v)
 	}
 }
