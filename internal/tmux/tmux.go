@@ -316,6 +316,8 @@ type PaneInfo struct {
 	Dead       bool
 	DeadStatus int    // exit code when Dead; 0 otherwise
 	Command    string // pane_current_command — the foreground process (primary liveness signal)
+	Activity   int64  // window_activity epoch seconds — when the pane last produced output. Age
+	                   // since now is the cheap silence signal for an UN-hooked agent (no capture).
 	EmeState   string // @eme_state pane user-option, pushed by an agent hook; "" when unset
 	EmeStateAt int64  // @eme_state_at epoch seconds, pushed alongside @eme_state; 0 when unset
 }
@@ -324,11 +326,12 @@ type PaneInfo struct {
 // One batched list-panes call replaces N per-worktree polls. A window maps to its
 // first pane (eme runs one pane per agent window).
 func PanesSnapshot() (map[string]PaneInfo, error) {
-	// The trailing #{@eme_state}/#{@eme_state_at} read pane user-options an agent hook may
-	// push (see `eme hooks install`); they expand to "" when unset, so this is inert until
-	// hooks are installed and never changes behavior for un-hooked panes.
+	// #{window_activity} is always present (a Unix timestamp) and sits before the optional
+	// hook tail so it is never stripped. The trailing #{@eme_state}/#{@eme_state_at} read pane
+	// user-options an agent hook may push (see `eme hooks install`); they expand to "" when
+	// unset, so this is inert until hooks are installed and never changes un-hooked behavior.
 	out, _, err := tmux("list-panes", "-a", "-F",
-		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}\t#{@eme_state_at}")
+		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{window_activity}\t#{@eme_state}\t#{@eme_state_at}")
 	if err != nil {
 		return nil, fmt.Errorf("tmux list-panes -a: %w", err)
 	}
@@ -347,23 +350,28 @@ func PanesSnapshot() (map[string]PaneInfo, error) {
 }
 
 // parsePaneLine parses one tab-separated list-panes row into a PaneInfo keyed by window id.
-// Trailing empty options (and the outer TrimSpace stripping a final tab) mean a line may
-// arrive with fewer than 6 fields; the optional @eme_state / @eme_state_at tail is read
-// only when present. ok is false for a blank line or one missing the structural fields.
+// Field order: window_id, pane_dead, pane_dead_status, pane_current_command, window_activity,
+// then the optional @eme_state / @eme_state_at hook tail. window_activity (f[4]) is always
+// present; the hook tail expands to "" when un-hooked and, with the outer TrimSpace stripping
+// trailing tabs, can leave a line with as few as 5 fields. ok is false for a blank line or one
+// missing the structural fields (fewer than 4).
 func parsePaneLine(line string) (PaneInfo, string, bool) {
 	if line == "" {
 		return PaneInfo{}, "", false
 	}
-	f := strings.SplitN(line, "\t", 6)
+	f := strings.SplitN(line, "\t", 7)
 	if len(f) < 4 {
 		return PaneInfo{}, "", false
 	}
 	info := PaneInfo{Dead: f[1] == "1", Command: f[3]}
 	if len(f) >= 5 {
-		info.EmeState = strings.TrimSpace(f[4])
+		info.Activity, _ = strconv.ParseInt(strings.TrimSpace(f[4]), 10, 64)
 	}
 	if len(f) >= 6 {
-		info.EmeStateAt, _ = strconv.ParseInt(strings.TrimSpace(f[5]), 10, 64)
+		info.EmeState = strings.TrimSpace(f[5])
+	}
+	if len(f) >= 7 {
+		info.EmeStateAt, _ = strconv.ParseInt(strings.TrimSpace(f[6]), 10, 64)
 	}
 	if info.Dead {
 		info.DeadStatus, _ = strconv.Atoi(strings.TrimSpace(f[2]))

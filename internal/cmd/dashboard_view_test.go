@@ -226,6 +226,39 @@ func TestBuildViews_DerivesAgeAndQuiet(t *testing.T) {
 	}
 }
 
+// TestBuildViews_UnhookedQuietFromActivity locks ET1: an un-hooked working agent (no
+// @eme_state) derives its age and the soft "quiet" hint from window_activity — recent output
+// reads as plain working, a long silence dims to quiet. Crucially the silent agent stays
+// StatusWorking, never StatusWaiting: an un-hooked guess dims, it never lights the beacon.
+func TestBuildViews_UnhookedQuietFromActivity(t *testing.T) {
+	now := time.Unix(1_750_000_600, 0) // 600s after the activity stamps below
+	sessions := []state.Session{{
+		ID: "s1", DisplayName: "proj", Layout: state.LayoutNestedBare,
+		Worktrees: []state.Worktree{
+			{Name: "busy", Path: "/p/busy", TmuxWindowID: "@1"},
+			{Name: "stalled", Path: "/p/stalled", TmuxWindowID: "@2"},
+		},
+	}}
+	snap := map[string]tmux.PaneInfo{
+		"@1": {Command: "node", Activity: 1_750_000_580}, // output 20s ago → working, not quiet
+		"@2": {Command: "node", Activity: 1_750_000_300}, // silent 300s   → quiet hint
+	}
+	views := buildViews(sessions, snap, false, now, 2*time.Minute)
+	wts := views[0].Worktrees
+	if wts[0].Hooked || wts[1].Hooked {
+		t.Fatalf("both agents are un-hooked; Hooked must be false: %+v", wts)
+	}
+	if wts[0].AgeLabel != "20s" || wts[0].Quiet {
+		t.Errorf("busy: age=%q quiet=%v, want 20s / not quiet (recently active)", wts[0].AgeLabel, wts[0].Quiet)
+	}
+	if wts[1].AgeLabel != "5m" || !wts[1].Quiet {
+		t.Errorf("stalled: age=%q quiet=%v, want 5m / quiet (silent ≥ 2m)", wts[1].AgeLabel, wts[1].Quiet)
+	}
+	if wts[1].Status != tui.StatusWorking {
+		t.Errorf("stalled: status=%v, want StatusWorking — silence is a dim hint, never the amber beacon", wts[1].Status)
+	}
+}
+
 func TestBuildSessionViews_CarriesCaffeinateMode(t *testing.T) {
 	sessions := []state.Session{{
 		ID: "p-1", DisplayName: "p", Root: "/p", TmuxName: "p",

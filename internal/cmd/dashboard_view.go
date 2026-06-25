@@ -50,13 +50,27 @@ func buildViews(sessions []state.Session, snap map[string]tmux.PaneInfo, withDif
 				Location:  shortLocation(w.Path),
 				Hooked:    present && strings.TrimSpace(info.EmeState) != "",
 			}
-			// Age/quiet are hook-derived and only meaningful while the agent is actively
-			// working or waiting; idle/exited/crashed carry no age.
-			if present && info.EmeStateAt > 0 && (status == tui.StatusWorking || status == tui.StatusWaiting) {
-				wv.StateChangedAt = time.Unix(info.EmeStateAt, 0)
-				wv.AgeLabel = formatAge(now.Sub(wv.StateChangedAt))
-				wv.Quiet = wv.Hooked && status == tui.StatusWorking &&
-					quietAfter > 0 && now.Sub(wv.StateChangedAt) >= quietAfter
+			// Age/quiet: a HOOKED agent derives them from @eme_state_at (when its state last
+			// changed); an UN-hooked working agent derives them from window_activity (when its
+			// pane last produced output) — the cheap silence signal already in the batched
+			// snapshot, no per-pane capture. Either source feeds the SAME soft "quiet" dim; an
+			// un-hooked guess never lights the amber beacon (DESIGN.md §5.2/F1) — at most it dims.
+			//
+			//	hooked   working|waiting → age = now − @eme_state_at ; quiet when working & age ≥ N
+			//	un-hooked working        → age = now − window_activity ; quiet when silent ≥ N
+			//	everything else          → no age, never quiet
+			var stateAt time.Time
+			switch {
+			case present && info.EmeStateAt > 0 && (status == tui.StatusWorking || status == tui.StatusWaiting):
+				stateAt = time.Unix(info.EmeStateAt, 0)
+			case present && !wv.Hooked && status == tui.StatusWorking && info.Activity > 0:
+				stateAt = time.Unix(info.Activity, 0)
+			}
+			if !stateAt.IsZero() {
+				wv.StateChangedAt = stateAt
+				wv.AgeLabel = formatAge(now.Sub(stateAt))
+				wv.Quiet = status == tui.StatusWorking &&
+					quietAfter > 0 && now.Sub(stateAt) >= quietAfter
 			}
 			if status == tui.StatusWorking {
 				wv.AgentLabel = agentLabel(w)

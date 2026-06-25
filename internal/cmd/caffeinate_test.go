@@ -154,8 +154,8 @@ func TestSessionStatuses_UsesClassifier(t *testing.T) {
 	// One worktree window @1 with a shell foreground → idle; the daemon's own
 	// window is not in state, so it is never counted.
 	mock.Set("tmux", []string{"list-panes", "-a", "-F",
-		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}\t#{@eme_state_at}"},
-		"@1\t0\t0\tzsh\t\t\n", "", nil)
+		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{window_activity}\t#{@eme_state}\t#{@eme_state_at}"},
+		"@1\t0\t0\tzsh\t1782353700\t\t\n", "", nil)
 	s := &state.State{Version: state.Version, Sessions: []state.Session{{
 		ID: "proj-1", TmuxName: "proj",
 		Worktrees: []state.Worktree{{Name: "main", TmuxWindowID: "@1"}},

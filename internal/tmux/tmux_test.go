@@ -54,34 +54,34 @@ func TestTmux_NoSocketLeavesArgsUntouched(t *testing.T) {
 	}
 }
 
-// TestPanesSnapshot_ParsesEmeStateAndLastPane guards two things: the @eme_state field
-// is read into PaneInfo, and the LAST pane is NOT dropped when its @eme_state is empty
-// — the outer TrimSpace strips that final line's trailing tab, leaving only 4 fields,
-// so the parse must tolerate a missing 5th field.
+// TestPanesSnapshot_ParsesEmeStateAndLastPane guards three things: window_activity and
+// @eme_state are read into PaneInfo, and the LAST pane is NOT dropped when its hook tail is
+// empty — the outer TrimSpace strips that final line's trailing tabs, leaving only the 5
+// always-present fields (through window_activity), so the parse must tolerate a missing tail.
 func TestPanesSnapshot_ParsesEmeStateAndLastPane(t *testing.T) {
 	oldRunner, oldSocket := Runner, Socket
 	mock := runner.NewMock()
 	Runner, Socket = mock, ""
 	defer func() { Runner, Socket = oldRunner, oldSocket }()
 
-	format := "#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{@eme_state}\t#{@eme_state_at}"
-	// Last pane has an empty @eme_state + trailing tab, exactly the dropped-pane case.
-	out := "@1\t0\t0\tnode\twaiting\t1750000000\n@2\t0\t0\tzsh\t\t\n"
+	format := "#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{window_activity}\t#{@eme_state}\t#{@eme_state_at}"
+	// Last pane has an empty hook tail + trailing tabs, exactly the dropped-pane case.
+	out := "@1\t0\t0\tnode\t1782353717\twaiting\t1750000000\n@2\t0\t0\tzsh\t1782353700\t\t\n"
 	mock.Set("tmux", []string{"list-panes", "-a", "-F", format}, out, "", nil)
 
 	snap, err := PanesSnapshot()
 	if err != nil {
 		t.Fatalf("PanesSnapshot: %v", err)
 	}
-	if a := snap["@1"]; a.EmeState != "waiting" || a.Command != "node" || a.Dead {
-		t.Errorf("@1 = %+v, want {Command:node EmeState:waiting Dead:false}", a)
+	if a := snap["@1"]; a.EmeState != "waiting" || a.Command != "node" || a.Dead || a.Activity != 1782353717 {
+		t.Errorf("@1 = %+v, want {Command:node EmeState:waiting Dead:false Activity:1782353717}", a)
 	}
 	b, ok := snap["@2"]
 	if !ok {
-		t.Fatal("@2 (last pane, empty @eme_state) was dropped — trailing-tab parse regression")
+		t.Fatal("@2 (last pane, empty hook tail) was dropped — trailing-tab parse regression")
 	}
-	if b.EmeState != "" || b.Command != "zsh" {
-		t.Errorf(`@2 = %+v, want {Command:zsh EmeState:""}`, b)
+	if b.EmeState != "" || b.Command != "zsh" || b.Activity != 1782353700 {
+		t.Errorf(`@2 = %+v, want {Command:zsh EmeState:"" Activity:1782353700}`, b)
 	}
 }
 
@@ -247,15 +247,18 @@ func TestCapturePane_EmptyPane(t *testing.T) {
 	}
 }
 
-// TestParsePaneLine_ReadsEmeStateAt verifies that parsePaneLine reads the sixth
-// tab-separated field into PaneInfo.EmeStateAt as an int64 epoch timestamp.
-func TestParsePaneLine_ReadsEmeStateAt(t *testing.T) {
-	info, wid, ok := parsePaneLine("@5\t0\t0\tnode\tworking\t1750000000")
+// TestParsePaneLine_ReadsActivityAndEmeState verifies the full 7-field row: window_activity
+// (f[4]) into Activity, then the @eme_state / @eme_state_at hook tail into their fields.
+func TestParsePaneLine_ReadsActivityAndEmeState(t *testing.T) {
+	info, wid, ok := parsePaneLine("@5\t0\t0\tnode\t1782353717\tworking\t1750000000")
 	if !ok {
 		t.Fatal("expected a parsed pane")
 	}
 	if wid != "@5" {
 		t.Errorf("window id = %q, want @5", wid)
+	}
+	if info.Activity != 1782353717 {
+		t.Errorf("Activity = %d, want 1782353717", info.Activity)
 	}
 	if info.EmeState != "working" {
 		t.Errorf("EmeState = %q, want working", info.EmeState)
@@ -265,12 +268,31 @@ func TestParsePaneLine_ReadsEmeStateAt(t *testing.T) {
 	}
 }
 
-// TestParsePaneLine_MissingTimestampIsZero verifies that a pre-upgrade pane
-// with only 5 fields (missing @eme_state_at) parses successfully with EmeStateAt=0.
+// TestParsePaneLine_UnhookedReadsActivity verifies the common un-hooked row: the hook tail is
+// stripped as trailing empties, leaving 5 fields. Activity is still read; the hook fields stay
+// zero-valued, so an un-hooked pane gets its silence signal without ever asserting a hook state.
+func TestParsePaneLine_UnhookedReadsActivity(t *testing.T) {
+	info, wid, ok := parsePaneLine("@5\t0\t0\tnode\t1782353717") // un-hooked: window_activity only
+	if !ok || wid != "@5" {
+		t.Fatalf("expected a parsed pane @5, got ok=%v wid=%q", ok, wid)
+	}
+	if info.Activity != 1782353717 {
+		t.Errorf("Activity = %d, want 1782353717", info.Activity)
+	}
+	if info.EmeState != "" || info.EmeStateAt != 0 {
+		t.Errorf("un-hooked pane must carry no hook state, got EmeState=%q EmeStateAt=%d", info.EmeState, info.EmeStateAt)
+	}
+}
+
+// TestParsePaneLine_MissingTimestampIsZero verifies a hooked pane that pushed @eme_state but
+// not @eme_state_at (6 fields): EmeStateAt parses to 0, Activity and EmeState still read.
 func TestParsePaneLine_MissingTimestampIsZero(t *testing.T) {
-	info, _, ok := parsePaneLine("@5\t0\t0\tnode\tworking") // pre-upgrade pane, 5 fields
+	info, _, ok := parsePaneLine("@5\t0\t0\tnode\t1782353717\tworking") // 6 fields, no @eme_state_at
 	if !ok || info.EmeStateAt != 0 {
 		t.Fatalf("missing @eme_state_at must be 0, got ok=%v at=%d", ok, info.EmeStateAt)
+	}
+	if info.EmeState != "working" || info.Activity != 1782353717 {
+		t.Errorf("EmeState=%q Activity=%d, want working / 1782353717", info.EmeState, info.Activity)
 	}
 }
 
