@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/muesli/termenv"
 	"github.com/spf13/cobra"
 
 	"github.com/JinmuGo/eme/internal/config"
@@ -91,6 +92,7 @@ func runDoctor() error {
 		{"tmux socket", checkTmuxSocket},
 		{"tmux server reachable", checkTmuxServer},
 		{"tmux popup support", checkTmuxPopup},
+		{"terminal color", checkColor},
 		{"git installed", checkGitInstalled},
 		{"agent on PATH", checkAgent},
 		{"state dir writable", checkStateDir},
@@ -212,6 +214,40 @@ func parseTmuxVersion(v string) (major, minor int, ok bool) {
 		return 0, 0, false
 	}
 	return major, minor, true
+}
+
+// checkColor reports the terminal color depth the dashboard will render at. It is
+// always "ok" — color is enhancement, never a requirement (every status also carries a
+// glyph + label), so degraded color is a heads-up, not a failure. The actionable case is
+// a tmux user without truecolor: the dashboard popup then renders the steel-blue/amber in
+// eme's pinned 256/16-color fallbacks instead of the exact theme hexes, so it points at
+// the one-line terminal-features fix that lets 24-bit reach the popup.
+func checkColor() (bool, string) {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		return true, "NO_COLOR set — monochrome by request (status reads by glyph + label)"
+	}
+	return true, colorProfileMessage(termenv.ColorProfile(), os.Getenv("TMUX") != "")
+}
+
+// colorProfileMessage describes what a detected color profile means for the dashboard.
+// Split from checkColor so the wording (and the tmux truecolor nudge) is unit-testable
+// without a live terminal — termenv.ColorProfile() reports Ascii whenever stdout is not a
+// TTY, so the real detection only happens on an interactive run.
+func colorProfileMessage(p termenv.Profile, inTmux bool) string {
+	switch p {
+	case termenv.TrueColor:
+		return "truecolor (24-bit) — full theme palette"
+	case termenv.ANSI256:
+		msg := "256-color — eme uses its pinned fallbacks (amber/blue/orange preserved)"
+		if inTmux {
+			msg += "; add " + "`set -ga terminal-features \",*:RGB\"`" + " to ~/.tmux.conf for 24-bit in popups"
+		}
+		return msg
+	case termenv.ANSI:
+		return "16-color — basic ANSI hues (each status still distinct)"
+	default:
+		return "no color detected — status reads by glyph + label"
+	}
 }
 
 func checkGitInstalled() (bool, string) {
