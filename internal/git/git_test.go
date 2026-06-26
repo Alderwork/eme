@@ -9,6 +9,50 @@ import (
 	"github.com/JinmuGo/eme/internal/runner"
 )
 
+func TestSetFetchRefspec(t *testing.T) {
+	mock := runner.NewMock()
+	mock.Set("git", []string{"-C", "/r/.bare", "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"}, "", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+	if err := SetFetchRefspec("/r/.bare"); err != nil {
+		t.Fatalf("SetFetchRefspec: %v", err)
+	}
+}
+
+func TestFetch(t *testing.T) {
+	mock := runner.NewMock()
+	mock.Set("git", []string{"-C", "/r/.bare", "fetch", "origin"}, "", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+	if err := Fetch("/r/.bare"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+}
+
+func TestDefaultBranch(t *testing.T) {
+	mock := runner.NewMock()
+	mock.Set("git", []string{"-C", "/r/.bare", "symbolic-ref", "--short", "HEAD"}, "master\n", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+	b, err := DefaultBranch("/r/.bare")
+	if err != nil {
+		t.Fatalf("DefaultBranch: %v", err)
+	}
+	if b != "master" {
+		t.Errorf("DefaultBranch = %q, want master", b)
+	}
+}
+
+func TestSetUpstream(t *testing.T) {
+	mock := runner.NewMock()
+	mock.Set("git", []string{"-C", "/r/main", "branch", "--set-upstream-to=origin/main", "main"}, "", "", nil)
+	Runner = mock
+	defer func() { Runner = runner.Default }()
+	if err := SetUpstream("/r/main", "main", "origin/main"); err != nil {
+		t.Fatalf("SetUpstream: %v", err)
+	}
+}
+
 func TestWorktreeAdd_NewBranch(t *testing.T) {
 	mock := runner.NewMock()
 	mock.Set("git", []string{"-C", "/tmp/foo/main", "worktree", "add", "-b", "feature", "/tmp/foo/feature"}, "", "", nil)
