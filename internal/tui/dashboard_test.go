@@ -709,7 +709,7 @@ func TestDashboardRefreshActionErrorIsTransient(t *testing.T) {
 
 func TestDashboardViewContainsMotifAndStatus(t *testing.T) {
 	v := NewDashboard(sampleViews(), nil).View()
-	for _, want := range []string{"eme", "myapp", "running", "crashed", "idle", "◐", "✗"} {
+	for _, want := range []string{"eme", "myapp", "running", "crashed", "idle", "◜", "✗"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("View() missing %q\n---\n%s", want, v)
 		}

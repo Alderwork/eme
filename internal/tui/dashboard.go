@@ -116,9 +116,9 @@ type DashboardModel struct {
 	// (off by default, toggled by `s`). rebuildRows is the single ordering authority, so the
 	// mode survives every reload/tick automatically; applyViews keeps the cursor on identity.
 	sortByAttention bool
-	// glyphFrame advances once per tick to animate the working spinner (◐◓◑◒); the
-	// waiting beacon never reads it, so it stays a static ●. Frame 0 renders ◐, so an
-	// un-ticked dashboard (and tests) read identically (DESIGN §5.1).
+	// glyphFrame indexes workingFrames (moon arcs) to spin the working glyph; the waiting
+	// beacon never reads it, so it stays a static ●. Non-animated renders use the still ◐
+	// rest glyph (Glyph), so tests and a first paint read consistently (DESIGN §5.1).
 	glyphFrame int
 	width      int
 	height     int

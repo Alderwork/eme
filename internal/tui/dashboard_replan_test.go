@@ -70,9 +70,9 @@ func TestTallyAllCalmNoRunning(t *testing.T) {
 	}
 }
 
-// TestWorkingGlyphAnimates: a working row's glyph advances with the tick frame (motion =
-// alive) while a waiting row stays a dead-still ● (DESIGN §5.1). Frame 0 is the canonical
-// ◐; frame 1 is ◓; the static ● is present at both.
+// TestWorkingGlyphAnimates: a working row's glyph advances with the frame (motion = alive)
+// while a waiting row stays a dead-still ● (DESIGN §5.1). Frame 0 is the moon arc ◜; frame
+// 1 advances to ◠; the static ● is present at both.
 func TestWorkingGlyphAnimates(t *testing.T) {
 	views := []SessionView{{DisplayName: "app", Root: "/app", Worktrees: []WorktreeView{
 		{Name: "w", SessionID: "app", Status: StatusWorking},
@@ -81,17 +81,17 @@ func TestWorkingGlyphAnimates(t *testing.T) {
 	m := NewDashboard(views, nil)
 
 	v0 := m.View()
-	if !strings.Contains(v0, "◐") || !strings.Contains(v0, "●") {
-		t.Errorf("frame 0: want working ◐ and waiting ●\n%s", v0)
+	if !strings.Contains(v0, "◜") || !strings.Contains(v0, "●") {
+		t.Errorf("frame 0: want working ◜ and waiting ●\n%s", v0)
 	}
 
 	m.glyphFrame = 1
 	v1 := m.View()
-	if !strings.Contains(v1, "◓") {
-		t.Errorf("frame 1: working glyph should advance to ◓\n%s", v1)
+	if !strings.Contains(v1, "◠") {
+		t.Errorf("frame 1: working glyph should advance to ◠\n%s", v1)
 	}
-	if strings.Contains(v1, "◐") {
-		t.Errorf("frame 1: the static ◐ should have animated away\n%s", v1)
+	if strings.Contains(v1, "◜") {
+		t.Errorf("frame 1: the frame-0 arc ◜ should have animated away\n%s", v1)
 	}
 	if !strings.Contains(v1, "●") {
 		t.Errorf("frame 1: the waiting beacon ● must stay static\n%s", v1)
@@ -110,7 +110,7 @@ func TestQuietWorkingGlyphFrozen(t *testing.T) {
 	if !strings.Contains(v, "◐") {
 		t.Errorf("a quiet working agent should freeze at ◐, not animate\n%s", v)
 	}
-	if strings.ContainsAny(v, "◓◑◒") {
+	if strings.ContainsAny(v, "◜◠◝◞◡◟") {
 		t.Errorf("a quiet working agent must not show a spinner frame\n%s", v)
 	}
 }

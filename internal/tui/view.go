@@ -86,13 +86,14 @@ func asciiGlyphs() bool {
 	return strings.TrimSpace(os.Getenv("EME_ASCII")) != ""
 }
 
-// workingFrames animates the working glyph as a slow spinner — one frame per dashboard
-// tick — so a live agent visibly MOVES while the waiting beacon stays a dead-still ●.
-// Motion vs stillness is the fastest pre-attentive cue and survives NO_COLOR and color
-// vision deficiency, closing the one gap the static ●/◐ pair leaves in the glyph channel
-// (DESIGN §5.1 sanctions ◐◓◑◒; §6.2). Frame 0 is ◐ — the canonical static glyph — so an
-// un-ticked render (and every Glyph() caller) reads identically.
-var workingFrames = []string{"◐", "◓", "◑", "◒"}
+// workingFrames spins the working glyph as a ring of moon arcs that reads as continuous
+// rotation while the waiting beacon stays a dead-still ●. Motion vs stillness is the
+// fastest pre-attentive cue and survives NO_COLOR and color vision deficiency (DESIGN
+// §5.1; §6.2). The arcs are distinct from the status fullness ramp (● ◐ ○ ·), so a
+// spinning agent is never mistaken for waiting/idle/exited with color off. The still rest
+// glyph stays the solid ◐ (Glyph) — shown for EME_ASCII, gone-quiet agents, and any
+// non-animated capture; live working agents cycle these arcs via the animation ticker.
+var workingFrames = []string{"◜", "◠", "◝", "◞", "◡", "◟"}
 
 // workingGlyphFrame returns the working spinner glyph for tick frame n. Only a live,
 // non-quiet working agent animates; ASCII mode and every other status fall back to the
