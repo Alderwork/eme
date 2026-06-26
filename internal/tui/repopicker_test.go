@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,3 +41,12 @@ func TestRepoPickerFilter(t *testing.T) {
 		t.Errorf("Selected = %q, want JinmuGo/spotifynow", m.Selected().NameWithOwner)
 	}
 }
+
+func TestRepoPickerBox(t *testing.T) {
+	m := NewRepoPicker(sampleRepos())
+	if got := m.Box(); !strings.Contains(got, "JinmuGo/eme") {
+		t.Errorf("Box() = %q, want it to list a repo", got)
+	}
+}
+
+var _ overlayModal = &RepoPickerModel{}

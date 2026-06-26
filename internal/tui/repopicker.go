@@ -105,11 +105,16 @@ func (m *RepoPickerModel) updateFilter() {
 
 // View implements tea.Model.
 func (m *RepoPickerModel) View() string {
-	box := dialogStyle.Render(m.content())
+	box := m.Box()
 	if m.width <= 0 || m.height <= 0 {
 		return box
 	}
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+// Box renders the picker as a bordered dialog without centering, for the dashboard overlay.
+func (m *RepoPickerModel) Box() string {
+	return dialogStyle.Render(m.content())
 }
 
 func (m *RepoPickerModel) content() string {
