@@ -36,9 +36,12 @@ func Available() bool {
 	return err == nil
 }
 
-// Authed reports whether gh has an authenticated account (gh auth status exits 0).
+// Authed reports whether gh's ACTIVE account is authenticated. It scopes the
+// check to --active on purpose: plain `gh auth status` exits non-zero when any
+// other stored account has an invalid token, which would wrongly report a working
+// active account (a common case after renaming/re-adding an account) as logged out.
 func Authed(ctx context.Context) bool {
-	_, _, err := Runner.Run(ctx, "gh", "auth", "status")
+	_, _, err := Runner.Run(ctx, "gh", "auth", "status", "--active")
 	return err == nil
 }
 

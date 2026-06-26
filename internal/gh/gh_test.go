@@ -41,8 +41,11 @@ func TestCloneBareArgs(t *testing.T) {
 }
 
 func TestAuthed(t *testing.T) {
+	// Authed must key on the ACTIVE account only (--active): plain `gh auth status`
+	// exits non-zero when any OTHER stored account has an invalid token, which would
+	// wrongly report a working active account as unauthenticated.
 	mock := runner.NewMock()
-	mock.Set("gh", []string{"auth", "status"}, "", "", nil)
+	mock.Set("gh", []string{"auth", "status", "--active"}, "", "", nil)
 	Runner = mock
 	defer func() { Runner = runner.Default }()
 	if !Authed(context.Background()) {
@@ -50,7 +53,7 @@ func TestAuthed(t *testing.T) {
 	}
 
 	mock2 := runner.NewMock()
-	mock2.Set("gh", []string{"auth", "status"}, "", "not logged in", errors.New("exit 1"))
+	mock2.Set("gh", []string{"auth", "status", "--active"}, "", "not logged in", errors.New("exit 1"))
 	Runner = mock2
 	if Authed(context.Background()) {
 		t.Error("Authed = true, want false on non-zero exit")
