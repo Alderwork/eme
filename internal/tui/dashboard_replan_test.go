@@ -169,3 +169,40 @@ func TestFirstRunHidesNudge(t *testing.T) {
 		t.Errorf("first run should not show the hook nudge\n%s", v)
 	}
 }
+
+// TestFirstRunWordmarkBanner: a wide first-run panel shows the chunky ASCII wordmark.
+func TestFirstRunWordmarkBanner(t *testing.T) {
+	t.Setenv("EME_ASCII", "") // force the Unicode banner path
+	v := NewDashboard(nil, nil).View()
+	if !strings.Contains(v, "█████") {
+		t.Errorf("first-run welcome should show the chunky ASCII wordmark banner\n%s", v)
+	}
+	for _, want := range []string{"mission control", "eeny · meeny · miny · moe", "Run agents across git worktrees"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("welcome lost %q after adding the banner\n%s", want, v)
+		}
+	}
+}
+
+// TestFirstRunWordmarkAsciiFallback: EME_ASCII degrades the banner to plain text.
+func TestFirstRunWordmarkAsciiFallback(t *testing.T) {
+	t.Setenv("EME_ASCII", "1")
+	v := NewDashboard(nil, nil).View()
+	if strings.Contains(v, "█") {
+		t.Errorf("EME_ASCII must not render block glyphs\n%s", v)
+	}
+	if !strings.Contains(v, "eme") {
+		t.Errorf("fallback must still show the text wordmark 'eme'\n%s", v)
+	}
+}
+
+// TestEmeWordmarkNarrowFallback: a panel narrower than the banner falls back to one line.
+func TestEmeWordmarkNarrowFallback(t *testing.T) {
+	got := emeWordmark(10)
+	if len(got) != 1 {
+		t.Fatalf("narrow panel should fall back to a single line, got %d", len(got))
+	}
+	if !strings.Contains(got[0], "eme") {
+		t.Errorf("narrow fallback should be the text wordmark, got %q", got[0])
+	}
+}

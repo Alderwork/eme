@@ -779,16 +779,18 @@ func (m *DashboardModel) View() string {
 		// licensed inside the TUI (DESIGN §8). The wordmark, the rhyme (relocated here from
 		// the header), one line of what eme does, then the single next action. Still all
 		// muted/text, no amber — it welcomes and teaches instead of just reporting emptiness.
-		welcome := []string{
+		welcome := []string{""}
+		welcome = append(welcome, emeWordmark(inner)...)
+		welcome = append(welcome,
 			"",
-			textStyle.Render("eme") + mutedStyle.Render(" · mission control for your agents"),
+			mutedStyle.Render("mission control for your agents"),
 			rhymeStyle.Render("eeny · meeny · miny · moe"),
 			"",
 			mutedStyle.Render("Run agents across git worktrees."),
 			mutedStyle.Render("eme lights the one that's waiting for you."),
 			"",
-			mutedStyle.Render("Press ") + titleStyle.Render("n") + mutedStyle.Render(" to start one in a folder."),
-		}
+			mutedStyle.Render("Press ")+titleStyle.Render("n")+mutedStyle.Render(" to start one in a folder."),
+		)
 		for _, ln := range welcome {
 			body = append(body, centerLine(ln, inner))
 		}
@@ -849,6 +851,33 @@ func clampWidth(s string, width int) string {
 // long line still occupies exactly one row.
 func centerLine(s string, width int) string {
 	return lipgloss.PlaceHorizontal(width, lipgloss.Center, clampWidth(s, width))
+}
+
+// emeWordmarkWidth is the column width of the chunky ASCII wordmark banner; the welcome
+// falls back to the plain text "eme" when the panel is narrower than this.
+const emeWordmarkWidth = 19
+
+// emeWordmark returns the first-run wordmark as centered-ready, pre-styled lines: a 5-row
+// chunky ASCII "eme" banner that carries the brand's playful, rounded character in the one
+// place DESIGN.md §8 licenses it. It degrades to the single text token "eme" when the panel
+// is too narrow for the banner or when EME_ASCII opts a non-Unicode terminal out of block
+// glyphs. The banner is neutral (Text) — amber stays the reserved beacon.
+func emeWordmark(inner int) []string {
+	if asciiGlyphs() || inner < emeWordmarkWidth {
+		return []string{textStyle.Render("eme")}
+	}
+	rows := []string{
+		"█████ █     █ █████",
+		"█     ██   ██ █",
+		"████  █ █ █ █ ████",
+		"█     █  █  █ █",
+		"█████ █     █ █████",
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = textStyle.Render(r + strings.Repeat(" ", emeWordmarkWidth-len([]rune(r))))
+	}
+	return out
 }
 
 // wrapStyled renders raw text in style, word-wrapped to width, and returns it as
