@@ -339,6 +339,30 @@ func (m *DashboardModel) headerIndexForSession(si int) int {
 	return m.cursor
 }
 
+// jumpToSession parks the cursor on project si's header (the ordinal shown in the row, 0-based
+// here), so a number key lands you on a project no matter where the cursor was. Out-of-range
+// indices (e.g. pressing 5 with three projects) are ignored, never clamped — a missing project
+// is a no-op, not a surprise jump to the last one. The fold state is left untouched: a folded
+// project stays folded under the cursor (its "(N hidden)" tail still tells you what's there).
+func (m *DashboardModel) jumpToSession(si int) {
+	if si < 0 || si >= len(m.views) {
+		return
+	}
+	m.cursor = m.headerIndexForSession(si)
+	m.refreshPreview()
+}
+
+// jumpToAdjacentSession moves to the previous/next project header (delta -1/+1) relative to the
+// session the cursor is in, so `[`/`]` step between projects even past the 9 the number keys
+// reach. Clamped at the ends (no wrap), and a no-op when the cursor is not on any session.
+func (m *DashboardModel) jumpToAdjacentSession(delta int) {
+	cur := m.selectedSession()
+	if cur < 0 {
+		return
+	}
+	m.jumpToSession(cur + delta)
+}
+
 // collapseSession folds a session and parks the cursor on its header so the row the
 // user was on never vanishes beneath them.
 func (m *DashboardModel) collapseSession(si int) {
@@ -529,6 +553,14 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 			m.refreshPreview()
+		case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+			// Jump straight to the project whose ordinal you pressed (the number shown in its
+			// header row). 1-9 only; past that, use [ / ] to step between projects.
+			m.jumpToSession(int(msg.String()[0]-'0') - 1)
+		case "[", "{":
+			m.jumpToAdjacentSession(-1)
+		case "]", "}":
+			m.jumpToAdjacentSession(1)
 		case "p":
 			m.togglePreview()
 		case "s":
@@ -721,9 +753,9 @@ func (m *DashboardModel) View() string {
 	if n := m.unhookedWorking(); n > 0 && len(m.rows) > 0 {
 		bottom = append(bottom, wrapStyled(mutedStyle, fmt.Sprintf("%d un-hooked · eme hooks install for live status", n), inner)...)
 	}
-	help := "↑↓/jk move · ←→/hl fold · ↵ open · n new · d kill · ? more · q quit"
+	help := "↑↓/jk move · 1-9 jump · ←→/hl fold · ↵ open · n new · d kill · ? more · q quit"
 	if m.showHelp {
-		help = "↑↓/jk move · ←→/hl fold · ↵/o open · p preview · n new · c worktree · a agent · A pick · x clean · s sort · w wake · d kill · q quit · ?"
+		help = "↑↓/jk move · 1-9 jump · [ ] prev/next project · ←→/hl fold · ↵/o open · p preview · n new · c worktree · a agent · A pick · x clean · s sort · w wake · d kill · q quit · ?"
 	}
 	if len(m.rows) == 0 {
 		help = "n new · q quit" // first run: only two moves matter

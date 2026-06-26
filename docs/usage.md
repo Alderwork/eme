@@ -104,6 +104,8 @@ The tree uses vim/nvim-style motions — sessions fold like a file tree.
 | Key | Action |
 |-----|--------|
 | `↓` / `j`, `↑` / `k` | Move down / up (over session headers and worktrees) |
+| `1`–`9` | Jump straight to that project (the number shown in its header row) |
+| `[` / `]` | Jump to the previous / next project (steps past the first 9) |
 | `→` / `l` | Expand a folded session, step into a session, or open a worktree |
 | `←` / `h` | Fold a session (from a worktree, fold its parent and jump to the header) |
 | `Enter` / `o` | On a worktree: switch to it · On a session header: toggle fold |
