@@ -14,6 +14,7 @@
 # internal planning/strategy docs — local-only, never commit (see CLAUDE.md)
 /DESIGN.md
 /UX-STRATEGY.md
+/BRAND.md
 
 # local docs — keep most local, but publish usage.md + ADRs + the brand kit
 /docs/*

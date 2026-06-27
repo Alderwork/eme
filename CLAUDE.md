@@ -36,7 +36,7 @@ obligations — keep the repo compliant as you work.
 These are internal planning/strategy docs. They live on **local disk only** and
 must **not** appear in the public repo or its git history. They are gitignored:
 
-- `DESIGN.md`, `UX-STRATEGY.md`
+- `DESIGN.md`, `UX-STRATEGY.md`, `BRAND.md`
 - `docs/prd.md`, `docs/dx-design.md`, `docs/qa-checklist.md`, `docs/oss-contest-checklist.md`
 - `docs/superpowers/**`, `.superpowers/**`
 - `open-source.pdf` (the contest rules document)
