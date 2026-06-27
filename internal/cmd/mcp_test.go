@@ -173,8 +173,8 @@ func TestMCPStartAgentLaunchesWhenIdle(t *testing.T) {
 	defer func() { statePath, runEme, agentRunningFn = oldState, oldRun, oldRunning }()
 	seedOneProject(t, dir)
 	agentRunningFn = func(w *state.Worktree) (bool, error) { return false, nil }
-	var gotArgs []string
-	runEme = func(args ...string) (string, string, error) { gotArgs = args; return "", "", nil }
+	var calls [][]string
+	runEme = func(args ...string) (string, string, error) { calls = append(calls, args); return "", "", nil }
 
 	r, err := mcpStartAgent(context.Background(), "demo", "main", "")
 	if err != nil {
@@ -183,9 +183,43 @@ func TestMCPStartAgentLaunchesWhenIdle(t *testing.T) {
 	if !r.Running || r.Message != "agent started" {
 		t.Fatalf("result = %+v", r)
 	}
-	// expect a bare `agent id1 main` toggle (no --set, since no override)
-	if len(gotArgs) != 3 || gotArgs[0] != "agent" || gotArgs[1] != "id1" || gotArgs[2] != "main" {
-		t.Fatalf("args = %v", gotArgs)
+	// expect exactly one bare `agent id1 main` toggle (no --set, since no override)
+	if len(calls) != 1 {
+		t.Fatalf("want 1 runEme call, got %d: %v", len(calls), calls)
+	}
+	if len(calls[0]) != 3 || calls[0][0] != "agent" || calls[0][1] != "id1" || calls[0][2] != "main" {
+		t.Fatalf("args = %v", calls[0])
+	}
+}
+
+func TestMCPStartAgentWithOverrideLaunchesOnce(t *testing.T) {
+	dir := t.TempDir()
+	oldState, oldRun, oldRunning := statePath, runEme, agentRunningFn
+	defer func() { statePath, runEme, agentRunningFn = oldState, oldRun, oldRunning }()
+	seedOneProject(t, dir)
+	agentRunningFn = func(w *state.Worktree) (bool, error) { return false, nil }
+	var calls [][]string
+	runEme = func(args ...string) (string, string, error) { calls = append(calls, args); return "", "", nil }
+
+	r, err := mcpStartAgent(context.Background(), "demo", "main", "claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Running || r.Message != "agent started" {
+		t.Fatalf("result = %+v", r)
+	}
+	// expect exactly ONE call: --set launches the agent; no following bare toggle
+	if len(calls) != 1 {
+		t.Fatalf("want 1 runEme call, got %d: %v", len(calls), calls)
+	}
+	want := []string{"agent", "id1", "main", "--set", "claude"}
+	if len(calls[0]) != len(want) {
+		t.Fatalf("args = %v, want %v", calls[0], want)
+	}
+	for i, v := range want {
+		if calls[0][i] != v {
+			t.Fatalf("args[%d] = %q, want %q (full: %v)", i, calls[0][i], v, calls[0])
+		}
 	}
 }
 

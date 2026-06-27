@@ -51,7 +51,9 @@ func (s *server) handleLine(line []byte) {
 	case "tools/list":
 		s.writeResult(req.ID, toolsListResult{Tools: toolDefs})
 	case "tools/call":
-		s.handleToolCall(req.ID, req.Params) // implemented in Task 2
+		if !isNotification {
+			s.handleToolCall(req.ID, req.Params)
+		}
 	default:
 		if !isNotification {
 			s.writeError(req.ID, codeMethodNotFound, "method not found: "+req.Method)

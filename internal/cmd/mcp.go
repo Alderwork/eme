@@ -35,7 +35,7 @@ func agentStatusString(s tui.AgentStatus) string {
 	}
 }
 
-func mcpWorktree(sess *state.Session, w *state.Worktree, snap map[string]tmux.PaneInfo) mcp.Worktree {
+func mcpWorktree(w *state.Worktree, snap map[string]tmux.PaneInfo) mcp.Worktree {
 	info, present := snap[w.TmuxWindowID]
 	return mcp.Worktree{
 		Name:         w.Name,
@@ -54,7 +54,7 @@ func toMCPProject(sess *state.Session, snap map[string]tmux.PaneInfo) mcp.Projec
 		Layout:      sess.Layout,
 	}
 	for j := range sess.Worktrees {
-		p.Worktrees = append(p.Worktrees, mcpWorktree(sess, &sess.Worktrees[j], snap))
+		p.Worktrees = append(p.Worktrees, mcpWorktree(&sess.Worktrees[j], snap))
 	}
 	return p
 }
@@ -81,7 +81,7 @@ func mcpGetProject(ctx context.Context, ref string) (mcp.Project, error) {
 	if err != nil {
 		return mcp.Project{}, err
 	}
-	snap, _ := tmux.PanesSnapshot()
+	snap, _ := tmux.PanesSnapshot() // best-effort: nil map degrades to idle/exited
 	return toMCPProject(sess, snap), nil
 }
 
@@ -248,9 +248,10 @@ func mcpStartAgent(ctx context.Context, ref, worktree, agent string) (mcp.AgentR
 		if _, stderr, err := runEme("agent", sess.ID, w.Name, "--set", agent); err != nil {
 			return mcp.AgentResult{}, mcpExecErr(stderr, err)
 		}
-	}
-	if _, stderr, err := runEme("agent", sess.ID, w.Name); err != nil {
-		return mcp.AgentResult{}, mcpExecErr(stderr, err)
+	} else {
+		if _, stderr, err := runEme("agent", sess.ID, w.Name); err != nil {
+			return mcp.AgentResult{}, mcpExecErr(stderr, err)
+		}
 	}
 	res.Running = true
 	res.Message = "agent started"
@@ -309,7 +310,7 @@ func mcpCreateWorktree(ctx context.Context, ref, name, agent string) (mcp.Worktr
 		return mcp.Worktree{}, fmt.Errorf("worktree %q created but not found in state", name)
 	}
 	snap, _ := tmux.PanesSnapshot()
-	return mcpWorktree(sess, w, snap), nil
+	return mcpWorktree(w, snap), nil
 }
 
 func newMCPDeps() mcp.Deps {

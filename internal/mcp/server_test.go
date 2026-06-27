@@ -87,4 +87,22 @@ func TestParseErrorOnBadJSON(t *testing.T) {
 	}
 }
 
+func TestToolsCallNotificationProducesNoResponseAndNoCall(t *testing.T) {
+	toolCalled := false
+	deps := Deps{
+		ListProjects: func(ctx context.Context) ([]Project, error) {
+			toolCalled = true
+			return nil, nil
+		},
+	}
+	// No "id" field → this is a JSON-RPC notification
+	resp := run(t, deps, `{"jsonrpc":"2.0","method":"tools/call","params":{"name":"list_projects","arguments":{}}}`)
+	if len(resp) != 0 {
+		t.Fatalf("want 0 responses for tools/call notification, got %d", len(resp))
+	}
+	if toolCalled {
+		t.Fatal("tool should not be executed when tools/call is sent as a notification")
+	}
+}
+
 var _ = context.Background // keep context imported for Task 2 tests
