@@ -446,6 +446,23 @@ func CapturePane(session, windowID string, n int) ([]string, error) {
 	return lines, nil
 }
 
+// CurrentWindow returns the session name and window id the attached client is currently
+// viewing, read in one display-message call. `eme jump` uses it to cycle: if the client
+// is already on a waiting agent, jump steps to the NEXT one. Run from inside tmux (e.g. a
+// `run-shell` key binding) where the triggering client is the target, so this resolves to
+// the user's active window. The format is a positional arg (display-message has no -F).
+func CurrentWindow() (session, windowID string, err error) {
+	out, _, err := tmux("display-message", "-p", "#{session_name}\t#{window_id}")
+	if err != nil {
+		return "", "", fmt.Errorf("tmux display-message: %w", err)
+	}
+	parts := strings.SplitN(strings.TrimSpace(out), "\t", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("unexpected display-message output: %q", out)
+	}
+	return parts[0], parts[1], nil
+}
+
 // PopupSize returns the dimensions available for a tmux popup in the current client.
 func PopupSize() (width, height int, err error) {
 	out, _, err := tmux("display", "-p", "#{popup_width}\t#{popup_height}")

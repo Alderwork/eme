@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/alderwork/eme/internal/errors"
+	"github.com/alderwork/eme/internal/state"
 	"github.com/alderwork/eme/internal/tmux"
 )
 
@@ -45,31 +46,39 @@ var switchCmd = &cobra.Command{
 			return err
 		}
 
-		// If the worktree's pane is frozen dead — a pane the user manually killed/exited,
-		// or one left by a legacy exec'd agent under remain-on-exit — switching in would
-		// drop the user onto a "Pane is dead" screen. Revive it to a fresh shell first so
-		// they land on a usable pane. Live agents and idle shells are left untouched.
-		// (Rare under the child-process model: a quit agent already returns to its shell.)
-		reviveIfDead(s, sess, w)
+		return switchToWorktree(s, sess, w)
+	},
+}
 
-		if tmux.ClientOnManagedServer() {
-			if err := tmux.SwitchClient(sess.TmuxName, w.TmuxWindowID); err != nil {
-				return errors.Wrap(errors.CodeCommandFailed,
-					fmt.Sprintf("Could not switch to %s/%s.", sess.DisplayName, w.Name),
-					"tmux switch-client failed.",
-					"Verify the tmux session still exists with `tmux list-sessions`.", err)
-			}
-			return nil
-		}
+// switchToWorktree lands the attached client on a worktree's window. It is the shared
+// core of `eme switch` and `eme jump`: revive a frozen-dead pane first, then move the
+// client — switch-client when the client is on eme's managed server, else attach-session
+// from outside it.
+func switchToWorktree(s *state.State, sess *state.Session, w *state.Worktree) error {
+	// If the worktree's pane is frozen dead — a pane the user manually killed/exited, or
+	// one left by a legacy exec'd agent under remain-on-exit — switching in would drop the
+	// user onto a "Pane is dead" screen. Revive it to a fresh shell first so they land on a
+	// usable pane. Live agents and idle shells are left untouched. (Rare under the
+	// child-process model: a quit agent already returns to its shell.)
+	reviveIfDead(s, sess, w)
 
-		if err := tmux.AttachSession(sess.TmuxName, w.TmuxWindowID); err != nil {
+	if tmux.ClientOnManagedServer() {
+		if err := tmux.SwitchClient(sess.TmuxName, w.TmuxWindowID); err != nil {
 			return errors.Wrap(errors.CodeCommandFailed,
-				fmt.Sprintf("Could not attach to %s/%s.", sess.DisplayName, w.Name),
-				"tmux attach-session failed.",
-				"Verify the tmux session exists.", err)
+				fmt.Sprintf("Could not switch to %s/%s.", sess.DisplayName, w.Name),
+				"tmux switch-client failed.",
+				"Verify the tmux session still exists with `tmux list-sessions`.", err)
 		}
 		return nil
-	},
+	}
+
+	if err := tmux.AttachSession(sess.TmuxName, w.TmuxWindowID); err != nil {
+		return errors.Wrap(errors.CodeCommandFailed,
+			fmt.Sprintf("Could not attach to %s/%s.", sess.DisplayName, w.Name),
+			"tmux attach-session failed.",
+			"Verify the tmux session exists.", err)
+	}
+	return nil
 }
 
 func defaultWorktree(args []string) string {

@@ -52,20 +52,23 @@ launch context (including plain shells outside tmux), pin it with
 `[tmux] socket = "<name>"` in `~/.config/eme/config.toml` or
 `EME_TMUX_SOCKET=<name>`. Run `eme doctor` to see which server is in use.
 
-### Ambient status segment (optional)
+### Waiting beacon + jump (optional)
 
-Surface the signal in your tmux status bar so you see a crashed agent without
-opening eme. Append the segment to your existing `status-right` — eme never edits
-your config — and let tmux poll it:
+Surface the agents waiting for your input in your tmux status bar, and jump
+straight to one — without opening the dashboard. Append the segment to your
+existing `status-right` — eme never edits your config — and bind the jump:
 
 ```tmux
 set -g status-interval 2
-set -ga status-right '#(eme status --tmux)'
+set -ga status-right '#(eme status --tmux)'   # ●N when N agents wait for input
+bind-key w run-shell 'eme jump'               # prefix + w → land on a waiting agent
 ```
 
-It is empty (a dark cockpit) when nothing needs you, and shows a glyph-led count
-when agents crash — e.g. `✗2`. It reads on a monochrome or colorblind bar; color
-is enhancement only. The amber `●` beacon for *waiting* agents is a fast-follow.
+The segment is empty (a dark cockpit) when nothing is waiting, and shows a
+glyph-led `●N` when agents need you. It reads on a monochrome or colorblind bar;
+color is enhancement only. `eme jump` lands you on the longest-waiting agent;
+press it again to cycle to the next. Waiting is detected from agent hooks, so run
+`eme hooks install` first (see below).
 
 ## Quick start
 
@@ -87,7 +90,8 @@ eme clean <id>         # reset a crashed/exited worktree's pane to idle
 eme agent <id>         # start/stop/toggle agent
 eme agent <id> --pick  # choose the worktree's agent from the catalog
 eme caffeinate <id> --mode manual|auto|off  # keep the Mac awake (macOS)
-eme status --tmux      # ambient status-bar segment (✗N when agents crash)
+eme status --tmux      # status-bar beacon: ●N agents waiting for input
+eme jump               # jump to a waiting agent (cycles on repeat)
 eme hooks install      # let the agent push precise status to eme (Claude Code; opt-in)
 eme forget <id>        # stop managing a project (leaves disk + tmux untouched)
 eme doctor             # verify environment

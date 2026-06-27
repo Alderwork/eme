@@ -17,11 +17,18 @@ go install github.com/alderwork/eme/cmd/eme@latest      # from source
 Add to `~/.tmux.conf`:
 
 ```tmux
-bind-key a display-popup -E -w 80% -h 80% eme
+bind-key a display-popup -E -w 80% -h 80% eme   # prefix + a → open the dashboard
+
+# Surface agents waiting for your input, and jump to one (needs `eme hooks install`):
+set -g status-interval 2
+set -ga status-right '#(eme status --tmux)'     # ●N in the bar when N agents wait
+bind-key w run-shell 'eme jump'                 # prefix + w → land on a waiting agent
 ```
 
-Reload with `tmux source-file ~/.tmux.conf`. See [`examples/tmux.conf`](../examples/tmux.conf)
-for the binding and [`examples/config.toml`](../examples/config.toml) for a fully-annotated config.
+The `status-right` line **appends** to your bar — eme never edits your config. `eme jump`
+cycles: press it again to step to the next waiting agent. Reload with `tmux source-file
+~/.tmux.conf`. See [`examples/tmux.conf`](../examples/tmux.conf) for the bindings and
+[`examples/config.toml`](../examples/config.toml) for a fully-annotated config.
 
 ## Your first project
 
@@ -44,7 +51,8 @@ eme clean <session> [worktree]       # revive a crashed/exited pane back to idle
 eme agent <session> [worktree]       # toggle the agent
 eme agent <session> [worktree] --pick  # choose the worktree's agent from the catalog
 eme caffeinate <session> --mode manual|auto|off  # keep the Mac awake (macOS)
-eme status --tmux                    # ambient tmux status-bar segment
+eme status --tmux                    # tmux status-bar beacon: ●N agents waiting for input
+eme jump                             # jump to a waiting agent (cycles on repeat)
 eme hooks install | uninstall        # agent status hooks (Claude Code; opt-in)
 eme forget <session>                 # stop managing a project (disk + tmux untouched)
 eme doctor [folder]                  # verify environment / classify a folder
@@ -163,9 +171,10 @@ Restart the agent (or start a new one) for the hooks to take effect. Under the h
 hook stamps a tmux pane option (`@eme_state`) that eme reads in its normal status poll;
 agents without it installed keep working with the foreground heuristic.
 
-Currently only Claude Code exposes the lifecycle hooks eme needs. One known gap: Claude's
-blocking choice menus (AskUserQuestion) don't fire the notification hook, so that
-particular waiting state isn't surfaced yet.
+With hooks installed, `waiting-for-input` is surfaced everywhere: the dashboard, the
+`eme status --tmux` beacon (`●N`), and `eme jump`. A real permission prompt and a blocking
+choice menu (`AskUserQuestion`) both register as waiting. Currently only Claude Code
+exposes the lifecycle hooks eme needs.
 
 ## Keeping the Mac awake (caffeinate)
 

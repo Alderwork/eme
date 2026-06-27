@@ -74,6 +74,7 @@ func init() {
 	rootCmd.AddCommand(newCmd)
 	rootCmd.AddCommand(cloneCmd)
 	rootCmd.AddCommand(switchCmd)
+	rootCmd.AddCommand(jumpCmd)
 	rootCmd.AddCommand(killCmd)
 	rootCmd.AddCommand(cleanCmd)
 	rootCmd.AddCommand(caffeinateCmd)

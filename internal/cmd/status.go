@@ -16,10 +16,13 @@ var statusTmux bool
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Print the ambient agent-status segment for a tmux status bar",
-	Long: `Print a one-line segment summarizing the agents that need you, for a tmux
-status bar. It is empty (a dark cockpit) when nothing needs you, and shows a danger
-glyph with a count when agents have crashed — e.g. ✗2. Glyph-led: it reads on a
+	Long: `Print a one-line segment surfacing the agents waiting for your input, for a
+tmux status bar. It is empty (a dark cockpit) when nothing is waiting, and shows a
+beacon glyph with a count when agents need you — e.g. ●2. Glyph-led: it reads on a
 monochrome or colorblind bar; color is enhancement only.
+
+Waiting is detected from agent hooks (run 'eme hooks install'); un-hooked agents
+never register as waiting. Pair this with 'eme jump' to land on a waiting agent.
 
 Wire it in by APPENDING to your existing status-right (eme never edits your config):
 
@@ -55,33 +58,26 @@ func statusSegment() string {
 	if err != nil {
 		return ""
 	}
-	crashed, waiting := 0, 0
+	waiting := 0
 	for i := range st.Sessions {
 		for j := range st.Sessions[i].Worktrees {
 			w := &st.Sessions[i].Worktrees[j]
 			info, present := snap[w.TmuxWindowID]
-			switch classifyStatus(info, present, w.LastAgentCommand) {
-			case tui.StatusCrashed:
-				crashed++
-			case tui.StatusWaiting:
-				waiting++ // not produced in v1; ready for the T8 silence-detection beacon
+			if classifyStatus(info, present, w.LastAgentCommand) == tui.StatusWaiting {
+				waiting++
 			}
 		}
 	}
-	return renderSegment(crashed, waiting)
+	return renderSegment(waiting)
 }
 
-// renderSegment is the pure formatter (no I/O, so it is exhaustively testable).
-// Danger beats the beacon — a crash takes the single slot — and the segment is empty
-// when nothing needs you. The glyph carries the meaning; the tmux color token is an
-// enhancement that a monochrome bar simply ignores.
-func renderSegment(crashed, waiting int) string {
-	switch {
-	case crashed > 0:
-		return theme.DangerTmux() + "✗" + strconv.Itoa(crashed) + theme.TmuxReset
-	case waiting > 0:
+// renderSegment is the pure formatter (no I/O, so it is exhaustively testable). The
+// segment is waiting-only: it shows the ●N beacon when agents wait for your input and
+// is empty otherwise. A crash is surfaced in the dashboard, never in the bar. The glyph
+// carries the meaning; the tmux color token is an enhancement a monochrome bar ignores.
+func renderSegment(waiting int) string {
+	if waiting > 0 {
 		return theme.BeaconTmux() + "●" + strconv.Itoa(waiting) + theme.TmuxReset
-	default:
-		return ""
 	}
+	return ""
 }

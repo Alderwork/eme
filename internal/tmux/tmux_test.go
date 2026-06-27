@@ -85,6 +85,55 @@ func TestPanesSnapshot_ParsesEmeStateAndLastPane(t *testing.T) {
 	}
 }
 
+// TestCurrentWindow parses the attached client's current (session_name, window_id)
+// from a single display-message call — the location jump cycles relative to.
+func TestCurrentWindow(t *testing.T) {
+	oldRunner, oldSocket := Runner, Socket
+	mock := runner.NewMock()
+	Runner, Socket = mock, ""
+	defer func() { Runner, Socket = oldRunner, oldSocket }()
+
+	mock.Set("tmux", []string{"display-message", "-p", "#{session_name}\t#{window_id}"}, "proj\t@7\n", "", nil)
+
+	sess, win, err := CurrentWindow()
+	if err != nil {
+		t.Fatalf("CurrentWindow: %v", err)
+	}
+	if sess != "proj" || win != "@7" {
+		t.Fatalf("got (%q, %q), want (proj, @7)", sess, win)
+	}
+}
+
+// TestCurrentWindow_Malformed: output without the expected tab is an error, not a
+// silently-truncated window ref that would mis-target the jump.
+func TestCurrentWindow_Malformed(t *testing.T) {
+	oldRunner, oldSocket := Runner, Socket
+	mock := runner.NewMock()
+	Runner, Socket = mock, ""
+	defer func() { Runner, Socket = oldRunner, oldSocket }()
+
+	mock.Set("tmux", []string{"display-message", "-p", "#{session_name}\t#{window_id}"}, "proj-no-tab\n", "", nil)
+
+	if _, _, err := CurrentWindow(); err == nil {
+		t.Fatal("malformed display-message output → want an error")
+	}
+}
+
+// TestCurrentWindow_EmptyComponent: a present tab but a blank session or window component
+// is still an error — returning ("", "@7") would mis-target the jump's current-window match.
+func TestCurrentWindow_EmptyComponent(t *testing.T) {
+	oldRunner, oldSocket := Runner, Socket
+	mock := runner.NewMock()
+	Runner, Socket = mock, ""
+	defer func() { Runner, Socket = oldRunner, oldSocket }()
+
+	mock.Set("tmux", []string{"display-message", "-p", "#{session_name}\t#{window_id}"}, "\t@7\n", "", nil)
+
+	if _, _, err := CurrentWindow(); err == nil {
+		t.Fatal("empty session component → want an error")
+	}
+}
+
 // TestClientOnManagedServer covers the switch-vs-attach decision: switch-client
 // only moves the user when their client is attached to eme's pinned server.
 func TestClientOnManagedServer(t *testing.T) {

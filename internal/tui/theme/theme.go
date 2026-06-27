@@ -93,18 +93,11 @@ func preferLight() bool {
 // touching its background (eme never overrides the host bar's platform).
 const TmuxReset = "#[fg=default]"
 
-// DangerTmux and BeaconTmux return tmux status-bar foreground tokens for the ambient
+// BeaconTmux returns the tmux status-bar foreground token for the waiting beacon in the
 // `eme status --tmux` segment, which speaks tmux's #[fg=colourN] dialect rather than
-// lipgloss ANSI. The ANSI256 indices mirror the Danger/Beacon roles above. Color is
-// enhancement only — the segment's glyph still carries the meaning on a monochrome or
-// colorblind bar — so these intentionally degrade to a plain 256-color index.
-func DangerTmux() string {
-	if preferLight() {
-		return "#[fg=colour130]"
-	}
-	return "#[fg=colour166]"
-}
-
+// lipgloss ANSI. The ANSI256 index mirrors the Beacon role above. Color is enhancement
+// only — the segment's ●N glyph still carries the meaning on a monochrome or colorblind
+// bar — so it intentionally degrades to a plain 256-color index.
 func BeaconTmux() string {
 	if preferLight() {
 		return "#[fg=colour130]"
