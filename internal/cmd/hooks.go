@@ -40,6 +40,18 @@ const (
 // idle). Its matcher is scoped to startup|resume|clear: the `compact` source is deliberately
 // EXCLUDED because auto-compaction can fire mid-turn and would falsely mark a working agent idle.
 //
+// PostToolUse closes the waiting→working gap: a `waiting` agent (a permission prompt or an
+// AskUserQuestion) leaves that state when the user RESPONDS, but approving a prompt or
+// answering a question fires NO UserPromptSubmit — so nothing would re-stamp `working` and the
+// row would stay stuck at waiting while the agent is already back to work. PostToolUse fires
+// after every tool completes, including a permission-approved tool and an answered
+// AskUserQuestion (the lifecycle is PreToolUse → permission → tool runs → PostToolUse), so an
+// empty-matcher PostToolUse → working is the reliable signal that the agent resumed. It also
+// re-stamps @eme_state_at, keeping an actively-tool-calling agent's age fresh (correct: it is
+// working). It can never wrongly clear a live `waiting`: that state is set by Notification /
+// PreToolUse which fire for the SAME tool only AFTER its (earlier) PostToolUse, and Stop → idle
+// still fires last when the turn ends.
+//
 // Stop still does NOT fire on a user interrupt (Esc), so an interrupted turn can leave a
 // transient stale `working` (and a stale @eme_state_at). The dashboard's window_activity
 // self-heal (see selfHealIdle in dashboard_view.go) recovers from that; the next
@@ -49,6 +61,7 @@ var emeHookEvents = []struct{ Event, Matcher, State string }{
 	{"UserPromptSubmit", "", "working"},              // user submitted a prompt → working
 	{"Notification", "permission_prompt", "waiting"}, // real permission prompt → waiting
 	{"PreToolUse", "AskUserQuestion", "waiting"},     // asking you a question → waiting
+	{"PostToolUse", "", "working"},                   // a tool completed (prompt approved / answered) → working
 	{"Stop", "", "idle"},                             // agent finished its turn → idle
 }
 

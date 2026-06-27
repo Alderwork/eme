@@ -49,20 +49,23 @@ func TestEmeHookCommand_StampsStateAndTimestamp(t *testing.T) {
 	}
 }
 
-// TestEmeHookEvents_FiveEventsWithMatchers verifies the emeHookEvents slice has exactly
-// five entries with the expected matchers (empty or non-empty as designed). SessionStart
+// TestEmeHookEvents_SixEventsWithMatchers verifies the emeHookEvents slice has exactly
+// six entries with the expected matchers (empty or non-empty as designed). SessionStart
 // stamps idle for startup/resume/clear so a freshly-launched agent reads idle at its prompt
 // before the first prompt; its matcher must exclude compact (auto-compaction can fire
-// mid-turn and would falsely mark a working agent idle).
-func TestEmeHookEvents_FiveEventsWithMatchers(t *testing.T) {
-	if len(emeHookEvents) != 5 {
-		t.Fatalf("emeHookEvents len = %d, want 5", len(emeHookEvents))
+// mid-turn and would falsely mark a working agent idle). PostToolUse stamps working after
+// every tool so a `waiting` agent recovers to working once the user approves a prompt or
+// answers a question (no UserPromptSubmit fires for those).
+func TestEmeHookEvents_SixEventsWithMatchers(t *testing.T) {
+	if len(emeHookEvents) != 6 {
+		t.Fatalf("emeHookEvents len = %d, want 6", len(emeHookEvents))
 	}
 	want := []struct{ Event, Matcher, State string }{
 		{"SessionStart", "startup|resume|clear", "idle"},
 		{"UserPromptSubmit", "", "working"},
 		{"Notification", "permission_prompt", "waiting"},
 		{"PreToolUse", "AskUserQuestion", "waiting"},
+		{"PostToolUse", "", "working"},
 		{"Stop", "", "idle"},
 	}
 	for i, w := range want {
@@ -75,6 +78,33 @@ func TestEmeHookEvents_FiveEventsWithMatchers(t *testing.T) {
 	}
 }
 
+// TestEmeHookEvents_PostToolUseReturnsToWorking locks the waiting→working recovery: an
+// agent stamped `waiting` by a permission prompt (Notification) or a question
+// (PreToolUse + AskUserQuestion) leaves that state when the user RESPONDS — but answering a
+// prompt fires no UserPromptSubmit, so without a PostToolUse signal @eme_state would stay
+// `waiting` while the agent is already working again. PostToolUse fires after every tool
+// completes (including a permission-approved tool and an answered AskUserQuestion), so an
+// empty-matcher PostToolUse → working is the only reliable signal that re-stamps working.
+func TestEmeHookEvents_PostToolUseReturnsToWorking(t *testing.T) {
+	var found *struct{ Event, Matcher, State string }
+	for i := range emeHookEvents {
+		if emeHookEvents[i].Event == "PostToolUse" {
+			found = &emeHookEvents[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("emeHookEvents has no PostToolUse entry: a waiting agent that resumes work " +
+			"(permission approved / question answered) would stay stuck at waiting")
+	}
+	if found.Matcher != "" {
+		t.Errorf("PostToolUse matcher = %q, want \"\" (fire after EVERY tool)", found.Matcher)
+	}
+	if found.State != "working" {
+		t.Errorf("PostToolUse state = %q, want working (a completed tool means the agent is working)", found.State)
+	}
+}
+
 // TestMergeClaudeHooks_AddsAllFourIntoEmptySettings: a fresh settings file gains all
 // four eme events, each a command that stamps @eme_state and @eme_state_at.
 func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
@@ -82,14 +112,14 @@ func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 5 {
-		t.Fatalf("added = %v, want 5 events", added)
+	if len(added) != 6 {
+		t.Fatalf("added = %v, want 6 events", added)
 	}
 	if len(updated) != 0 {
 		t.Fatalf("updated = %v, want none on fresh install", updated)
 	}
 	hm := hooksMap(t, decodeSettings(t, out))
-	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "Notification", "PreToolUse", "Stop"} {
+	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "Notification", "PreToolUse", "PostToolUse", "Stop"} {
 		groups := hm[ev]
 		if !groupsHaveEme(groups) {
 			t.Errorf("event %s missing an @eme_state command", ev)
@@ -112,6 +142,15 @@ func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
 	preGroups := hm["PreToolUse"]
 	if len(preGroups) == 0 || preGroups[len(preGroups)-1].Matcher != "AskUserQuestion" {
 		t.Errorf("PreToolUse group matcher = %q, want AskUserQuestion", preGroups)
+	}
+	// PostToolUse fires on EVERY tool (empty matcher) and stamps working, so a waiting agent
+	// recovers once the user approves a prompt / answers a question.
+	postGroups := hm["PostToolUse"]
+	if len(postGroups) == 0 || postGroups[len(postGroups)-1].Matcher != "" {
+		t.Errorf("PostToolUse group matcher = %q, want \"\" (every tool)", postGroups)
+	}
+	if cmd := hm["PostToolUse"][0].Hooks[0].Command; !strings.Contains(cmd, `@eme_state working`) {
+		t.Errorf("PostToolUse command = %q, want an @eme_state working stamp", cmd)
 	}
 	// SessionStart must stamp idle and scope to startup|resume|clear (compact excluded, so
 	// an auto-compaction mid-turn never marks a working agent idle).
@@ -136,13 +175,14 @@ func TestMergeClaudeHooks_UpgradesOldInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	// The old 3-event install gains the two events it never had: PreToolUse and SessionStart.
+	// The old 3-event install gains the three events it never had: PreToolUse, SessionStart,
+	// and PostToolUse.
 	gotAdded := map[string]bool{}
 	for _, a := range added {
 		gotAdded[a] = true
 	}
-	if len(added) != 2 || !gotAdded["PreToolUse"] || !gotAdded["SessionStart"] {
-		t.Errorf("added=%v, want [PreToolUse SessionStart] (any order)", added)
+	if len(added) != 3 || !gotAdded["PreToolUse"] || !gotAdded["SessionStart"] || !gotAdded["PostToolUse"] {
+		t.Errorf("added=%v, want [PreToolUse SessionStart PostToolUse] (any order)", added)
 	}
 	if len(updated) != 3 {
 		t.Errorf("updated=%v, want 3 (UserPromptSubmit, Notification, Stop)", updated)
@@ -171,8 +211,8 @@ func TestMergeClaudeHooks_PreservesOtherKeysAndHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 5 {
-		t.Fatalf("added = %v, want 5", added)
+	if len(added) != 6 {
+		t.Fatalf("added = %v, want 6", added)
 	}
 	root := decodeSettings(t, out)
 	if _, ok := root["theme"]; !ok {
@@ -257,15 +297,15 @@ func TestRemoveEmeHooks_StripsOnlyEme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if len(removed) != 5 {
-		t.Fatalf("removed = %v, want 5 events", removed)
+	if len(removed) != 6 {
+		t.Fatalf("removed = %v, want 6 events", removed)
 	}
 	root := decodeSettings(t, cleaned)
 	if _, ok := root["theme"]; !ok {
 		t.Error("theme dropped during uninstall")
 	}
 	hm := hooksMap(t, root)
-	// SessionStart, UserPromptSubmit, Notification, PreToolUse were eme-only → removed entirely.
+	// SessionStart, UserPromptSubmit, Notification, PreToolUse, PostToolUse were eme-only → removed entirely.
 	if _, ok := hm["SessionStart"]; ok {
 		t.Error("empty SessionStart event should be deleted")
 	}
@@ -277,6 +317,9 @@ func TestRemoveEmeHooks_StripsOnlyEme(t *testing.T) {
 	}
 	if _, ok := hm["PreToolUse"]; ok {
 		t.Error("empty PreToolUse event should be deleted")
+	}
+	if _, ok := hm["PostToolUse"]; ok {
+		t.Error("empty PostToolUse event should be deleted")
 	}
 	// Stop keeps the foreign group; SessionEnd untouched.
 	if len(hm["Stop"]) != 1 || hm["Stop"][0].Hooks[0].Command != "echo mine" {
@@ -321,8 +364,8 @@ func TestMergeClaudeHooks_NullHooksDoesNotPanic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("merge(%s): %v", in, err)
 		}
-		if len(added) != 5 {
-			t.Errorf("merge(%s) added %v, want 5", in, added)
+		if len(added) != 6 {
+			t.Errorf("merge(%s) added %v, want 6", in, added)
 		}
 		if !groupsHaveEme(hooksMap(t, decodeSettings(t, out))["Stop"]) {
 			t.Errorf("merge(%s) did not install the Stop hook", in)
