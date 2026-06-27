@@ -174,6 +174,34 @@ func TestSessionStatuses_UsesClassifier(t *testing.T) {
 	}
 }
 
+// TestSessionStatuses_SelfHealsStrandedClaude: a claude pane left with a STALE
+// @eme_state="working" (e.g. an Esc-interrupt fires no Stop hook) but no output for far
+// longer than the idle threshold is reported Idle, not Working — so auto-caffeinate matches
+// the dashboard and stops holding the Mac awake on an interrupted, abandoned agent.
+func TestSessionStatuses_SelfHealsStrandedClaude(t *testing.T) {
+	mock := stubCaffeinateEnv(t)
+	// @1: claude foreground (non-shell), stale @eme_state=working, window_activity years old.
+	mock.Set("tmux", []string{"list-panes", "-a", "-F",
+		"#{window_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_current_command}\t#{window_activity}\t#{@eme_state}\t#{@eme_state_at}"},
+		"@1\t0\t0\t2.1.195\t1700000000\tworking\t1700000000\n", "", nil)
+	s := &state.State{Version: state.Version, Sessions: []state.Session{{
+		ID: "proj-1", TmuxName: "proj",
+		Worktrees: []state.Worktree{{Name: "main", TmuxWindowID: "@1", LastAgentCommand: "claude"}},
+	}}}
+	withTempStatePath(t, s)
+
+	got, ok := sessionStatuses("proj-1")
+	if !ok {
+		t.Fatal("sessionStatuses: expected ok=true")
+	}
+	if len(got) != 1 || got[0] != tui.StatusIdle {
+		t.Fatalf("sessionStatuses = %v, want [idle] (stale working self-healed)", got)
+	}
+	if anyWorking(got) {
+		t.Fatal("a stranded-working claude must not keep caffeinate asserting")
+	}
+}
+
 func TestSessionStatuses_ReadFailureReturnsNotOk(t *testing.T) {
 	// stubCaffeinateEnv sets up the mock runner but we deliberately do NOT stub
 	// list-panes, so PanesSnapshot will error → sessionStatuses must return ok=false.

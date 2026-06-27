@@ -34,9 +34,18 @@ const (
 //   - Notification + permission_prompt → waiting (only on a real permission request)
 //   - PreToolUse + AskUserQuestion     → waiting (the agent is asking you something)
 //
+// SessionStart stamps idle so a freshly-launched (or resumed / cleared) agent reads idle at
+// its prompt BEFORE the first UserPromptSubmit, instead of the optimistic `working` the
+// foreground heuristic would otherwise show (claude is a non-shell foreground whether busy or
+// idle). Its matcher is scoped to startup|resume|clear: the `compact` source is deliberately
+// EXCLUDED because auto-compaction can fire mid-turn and would falsely mark a working agent idle.
+//
 // Stop still does NOT fire on a user interrupt (Esc), so an interrupted turn can leave a
-// transient stale `working` (and a stale @eme_state_at) that the next UserPromptSubmit clears.
+// transient stale `working` (and a stale @eme_state_at). The dashboard's window_activity
+// self-heal (see selfHealIdle in dashboard_view.go) recovers from that; the next
+// UserPromptSubmit also clears it.
 var emeHookEvents = []struct{ Event, Matcher, State string }{
+	{"SessionStart", "startup|resume|clear", "idle"}, // session begins at an idle prompt (not compact)
 	{"UserPromptSubmit", "", "working"},              // user submitted a prompt → working
 	{"Notification", "permission_prompt", "waiting"}, // real permission prompt → waiting
 	{"PreToolUse", "AskUserQuestion", "waiting"},     // asking you a question → waiting

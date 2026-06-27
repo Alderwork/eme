@@ -41,6 +41,7 @@ func buildViews(sessions []state.Session, snap map[string]tmux.PaneInfo, withDif
 			w := &s.Worktrees[j]
 			info, present := snap[w.TmuxWindowID]
 			status := classifyStatus(info, present, w.LastAgentCommand)
+			status = selfHealIdle(status, info, w, now, quietAfter)
 			wv := tui.WorktreeView{
 				Name:      w.Name,
 				Branch:    w.Branch,
@@ -201,6 +202,36 @@ func emeState(v string) (tui.AgentStatus, bool) {
 	default:
 		return tui.StatusIdle, false
 	}
+}
+
+// selfHealIdle downgrades a stranded "working" Claude row to idle using window_activity as a
+// self-healing fallback for the one gap the hooks cannot cover: an idle agent whose @eme_state
+// is a STALE "working" (the Stop hook does NOT fire on an Esc-interrupt — see hooks.go) or is
+// still empty before the first prompt. Claude's TUI repaints sub-second (animated spinner +
+// ticking elapsed timer) while it is working OR waiting, so a pane that has produced no output
+// for longer than the idle threshold is genuinely idle at its prompt — for Claude. It is gated
+// to Claude (isClaudeAgent): other agents have no animated TUI, so their silence does not imply
+// idle and must keep the optimistic working guess (only dimmed, per buildViews). It only ever
+// turns Working→Idle, never toward Waiting, so it can never light the amber beacon on a guess.
+// The threshold is 2× quietAfter: a working row stays solid (0–quiet), dims to "quiet"
+// (quiet–idle), then reads idle (>idle) — reusing the one Status.QuietAfter knob, no new config.
+// With quietAfter disabled (0) or no window_activity stamp, the self-heal is inert.
+func selfHealIdle(status tui.AgentStatus, info tmux.PaneInfo, w *state.Worktree, now time.Time, quietAfter time.Duration) tui.AgentStatus {
+	if status != tui.StatusWorking || quietAfter <= 0 || info.Activity <= 0 || !isClaudeAgent(info, w) {
+		return status
+	}
+	if now.Sub(time.Unix(info.Activity, 0)) >= 2*quietAfter {
+		return tui.StatusIdle
+	}
+	return status
+}
+
+// isClaudeAgent reports whether a worktree's agent is Claude Code — the one agent whose
+// continuously-repainting TUI makes a frozen window_activity a reliable idle signal. True when
+// the recorded launch command is claude, or when a hook has stamped @eme_state (only Claude
+// installs eme's status hooks today, so a present @eme_state implies Claude).
+func isClaudeAgent(info tmux.PaneInfo, w *state.Worktree) bool {
+	return agentLabel(w) == "claude" || strings.TrimSpace(info.EmeState) != ""
 }
 
 // shortLocation renders a filesystem path as its last two path segments, prefixed with

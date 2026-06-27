@@ -259,6 +259,63 @@ func TestBuildViews_UnhookedQuietFromActivity(t *testing.T) {
 	}
 }
 
+// TestBuildViews_SelfHealsStrandedWorkingClaude locks the self-heal: a CLAUDE agent
+// classified Working whose pane has gone silent (window_activity frozen) past the idle
+// threshold (2× quiet_after) is downgraded to Idle. Claude's TUI repaints sub-second while
+// working OR waiting, so frozen activity is ground-truth-grade idle for claude — it catches
+// a stale @eme_state="working" left by an Esc-interrupt (no Stop fires) and an empty
+// @eme_state before the first prompt. The downgrade is claude-gated (silence is unreliable
+// for non-animating agents) and only ever Working→Idle, never toward Waiting (the beacon is
+// never lit on a guess).
+func TestBuildViews_SelfHealsStrandedWorkingClaude(t *testing.T) {
+	now := time.Unix(1_750_000_600, 0)
+	stale := int64(1_750_000_300) // 300s ago ≥ 2×quiet_after (=240s) → silent
+	fresh := int64(1_750_000_580) // 20s ago → still repainting
+	sessions := []state.Session{{
+		ID: "s1", DisplayName: "proj", Layout: state.LayoutNestedBare,
+		Worktrees: []state.Worktree{
+			{Name: "esc", Path: "/p/esc", TmuxWindowID: "@1", LastAgentCommand: "claude"},
+			{Name: "busy", Path: "/p/busy", TmuxWindowID: "@2", LastAgentCommand: "claude"},
+			{Name: "fresh", Path: "/p/fresh", TmuxWindowID: "@3", LastAgentCommand: "claude"},
+			{Name: "wait", Path: "/p/wait", TmuxWindowID: "@4", LastAgentCommand: "claude"},
+			{Name: "codex", Path: "/p/codex", TmuxWindowID: "@5", LastAgentCommand: "codex"},
+			{Name: "noact", Path: "/p/noact", TmuxWindowID: "@6", LastAgentCommand: "claude"},
+		},
+	}}
+	snap := map[string]tmux.PaneInfo{
+		// Esc-stranded: hook left @eme_state=working, pane silent ≥ threshold → idle.
+		"@1": {Command: "2.1.195", EmeState: "working", EmeStateAt: stale, Activity: stale},
+		// Genuinely working: pane repainting (fresh activity) → stays working.
+		"@2": {Command: "2.1.195", EmeState: "working", EmeStateAt: fresh, Activity: fresh},
+		// Fresh launch before first prompt: empty @eme_state, silent claude → idle.
+		"@3": {Command: "2.1.195", EmeState: "", Activity: stale},
+		// Waiting at a prompt: stays Waiting even when silent — never demoted (beacon kept).
+		"@4": {Command: "2.1.195", EmeState: "waiting", EmeStateAt: stale, Activity: stale},
+		// Non-claude agent silent while busy: NOT self-healed (silence ≠ idle for it).
+		"@5": {Command: "node", EmeState: "", Activity: stale},
+		// No window_activity timestamp: guard skips the self-heal → stays working.
+		"@6": {Command: "2.1.195", EmeState: "working", EmeStateAt: stale, Activity: 0},
+	}
+	views := buildViews(sessions, snap, false, now, 2*time.Minute)
+	got := map[string]tui.AgentStatus{}
+	for _, w := range views[0].Worktrees {
+		got[w.Name] = w.Status
+	}
+	want := map[string]tui.AgentStatus{
+		"esc":   tui.StatusIdle,
+		"busy":  tui.StatusWorking,
+		"fresh": tui.StatusIdle,
+		"wait":  tui.StatusWaiting,
+		"codex": tui.StatusWorking,
+		"noact": tui.StatusWorking,
+	}
+	for name, w := range want {
+		if got[name] != w {
+			t.Errorf("%s: status = %v, want %v", name, got[name], w)
+		}
+	}
+}
+
 func TestBuildSessionViews_CarriesCaffeinateMode(t *testing.T) {
 	sessions := []state.Session{{
 		ID: "p-1", DisplayName: "p", Root: "/p", TmuxName: "p",

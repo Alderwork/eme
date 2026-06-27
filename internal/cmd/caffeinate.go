@@ -201,11 +201,17 @@ func sessionStatuses(sessionID string) ([]tui.AgentStatus, bool) {
 	if err != nil {
 		return nil, false
 	}
+	now := time.Now()
+	quietAfter := cfg.QuietAfterDuration()
 	out := make([]tui.AgentStatus, 0, len(sess.Worktrees))
 	for i := range sess.Worktrees {
 		w := &sess.Worktrees[i]
 		info, present := snap[w.TmuxWindowID]
-		out = append(out, classifyStatus(info, present, w.LastAgentCommand))
+		status := classifyStatus(info, present, w.LastAgentCommand)
+		// Same self-heal as the dashboard: a claude pane stuck at a stale @eme_state="working"
+		// but silent past the idle threshold is idle — don't keep the Mac awake for it.
+		status = selfHealIdle(status, info, w, now, quietAfter)
+		out = append(out, status)
 	}
 	return out, true
 }

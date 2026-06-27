@@ -49,13 +49,17 @@ func TestEmeHookCommand_StampsStateAndTimestamp(t *testing.T) {
 	}
 }
 
-// TestEmeHookEvents_FourEventsWithMatchers verifies the emeHookEvents slice has exactly
-// four entries with the expected matchers (empty or non-empty as designed).
-func TestEmeHookEvents_FourEventsWithMatchers(t *testing.T) {
-	if len(emeHookEvents) != 4 {
-		t.Fatalf("emeHookEvents len = %d, want 4", len(emeHookEvents))
+// TestEmeHookEvents_FiveEventsWithMatchers verifies the emeHookEvents slice has exactly
+// five entries with the expected matchers (empty or non-empty as designed). SessionStart
+// stamps idle for startup/resume/clear so a freshly-launched agent reads idle at its prompt
+// before the first prompt; its matcher must exclude compact (auto-compaction can fire
+// mid-turn and would falsely mark a working agent idle).
+func TestEmeHookEvents_FiveEventsWithMatchers(t *testing.T) {
+	if len(emeHookEvents) != 5 {
+		t.Fatalf("emeHookEvents len = %d, want 5", len(emeHookEvents))
 	}
 	want := []struct{ Event, Matcher, State string }{
+		{"SessionStart", "startup|resume|clear", "idle"},
 		{"UserPromptSubmit", "", "working"},
 		{"Notification", "permission_prompt", "waiting"},
 		{"PreToolUse", "AskUserQuestion", "waiting"},
@@ -78,14 +82,14 @@ func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 4 {
-		t.Fatalf("added = %v, want 4 events", added)
+	if len(added) != 5 {
+		t.Fatalf("added = %v, want 5 events", added)
 	}
 	if len(updated) != 0 {
 		t.Fatalf("updated = %v, want none on fresh install", updated)
 	}
 	hm := hooksMap(t, decodeSettings(t, out))
-	for _, ev := range []string{"UserPromptSubmit", "Notification", "PreToolUse", "Stop"} {
+	for _, ev := range []string{"SessionStart", "UserPromptSubmit", "Notification", "PreToolUse", "Stop"} {
 		groups := hm[ev]
 		if !groupsHaveEme(groups) {
 			t.Errorf("event %s missing an @eme_state command", ev)
@@ -109,6 +113,15 @@ func TestMergeClaudeHooks_AddsAllFourIntoEmptySettings(t *testing.T) {
 	if len(preGroups) == 0 || preGroups[len(preGroups)-1].Matcher != "AskUserQuestion" {
 		t.Errorf("PreToolUse group matcher = %q, want AskUserQuestion", preGroups)
 	}
+	// SessionStart must stamp idle and scope to startup|resume|clear (compact excluded, so
+	// an auto-compaction mid-turn never marks a working agent idle).
+	ssGroups := hm["SessionStart"]
+	if len(ssGroups) == 0 || ssGroups[len(ssGroups)-1].Matcher != "startup|resume|clear" {
+		t.Errorf("SessionStart group matcher = %q, want startup|resume|clear", ssGroups)
+	}
+	if cmd := hm["SessionStart"][0].Hooks[0].Command; !strings.Contains(cmd, `@eme_state idle`) {
+		t.Errorf("SessionStart command = %q, want an @eme_state idle stamp", cmd)
+	}
 }
 
 func TestMergeClaudeHooks_UpgradesOldInstall(t *testing.T) {
@@ -123,8 +136,13 @@ func TestMergeClaudeHooks_UpgradesOldInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 1 || added[0] != "PreToolUse" {
-		t.Errorf("added=%v, want [PreToolUse]", added)
+	// The old 3-event install gains the two events it never had: PreToolUse and SessionStart.
+	gotAdded := map[string]bool{}
+	for _, a := range added {
+		gotAdded[a] = true
+	}
+	if len(added) != 2 || !gotAdded["PreToolUse"] || !gotAdded["SessionStart"] {
+		t.Errorf("added=%v, want [PreToolUse SessionStart] (any order)", added)
 	}
 	if len(updated) != 3 {
 		t.Errorf("updated=%v, want 3 (UserPromptSubmit, Notification, Stop)", updated)
@@ -153,8 +171,8 @@ func TestMergeClaudeHooks_PreservesOtherKeysAndHooks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("merge: %v", err)
 	}
-	if len(added) != 4 {
-		t.Fatalf("added = %v, want 4", added)
+	if len(added) != 5 {
+		t.Fatalf("added = %v, want 5", added)
 	}
 	root := decodeSettings(t, out)
 	if _, ok := root["theme"]; !ok {
@@ -239,15 +257,18 @@ func TestRemoveEmeHooks_StripsOnlyEme(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	if len(removed) != 4 {
-		t.Fatalf("removed = %v, want 4 events", removed)
+	if len(removed) != 5 {
+		t.Fatalf("removed = %v, want 5 events", removed)
 	}
 	root := decodeSettings(t, cleaned)
 	if _, ok := root["theme"]; !ok {
 		t.Error("theme dropped during uninstall")
 	}
 	hm := hooksMap(t, root)
-	// UserPromptSubmit, Notification, PreToolUse were eme-only → removed entirely.
+	// SessionStart, UserPromptSubmit, Notification, PreToolUse were eme-only → removed entirely.
+	if _, ok := hm["SessionStart"]; ok {
+		t.Error("empty SessionStart event should be deleted")
+	}
 	if _, ok := hm["UserPromptSubmit"]; ok {
 		t.Error("empty UserPromptSubmit event should be deleted")
 	}
@@ -300,8 +321,8 @@ func TestMergeClaudeHooks_NullHooksDoesNotPanic(t *testing.T) {
 		if err != nil {
 			t.Fatalf("merge(%s): %v", in, err)
 		}
-		if len(added) != 4 {
-			t.Errorf("merge(%s) added %v, want 4", in, added)
+		if len(added) != 5 {
+			t.Errorf("merge(%s) added %v, want 5", in, added)
 		}
 		if !groupsHaveEme(hooksMap(t, decodeSettings(t, out))["Stop"]) {
 			t.Errorf("merge(%s) did not install the Stop hook", in)
