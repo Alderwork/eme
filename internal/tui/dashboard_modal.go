@@ -234,11 +234,122 @@ func (m *DashboardModel) advanceFromAgentCancel() tea.Cmd {
 }
 
 // runFlow closes the modal and dispatches the flow's `eme` child in the background (no
-// terminal handoff, so the dashboard never clears).
+// terminal handoff, so the dashboard never clears). A create flow first arms a pending
+// switch so the dashboard lands on the new window once the child returns.
 func (m *DashboardModel) runFlow(agent string) tea.Cmd {
 	args := m.flowArgs(agent)
+	m.armCreateSwitch()
 	m.closeModal()
 	return m.runChildBackground(args...)
+}
+
+// createSwitch records what a completed create flow should switch to. The new
+// session/worktree is identified against the post-create reload rather than guessed up
+// front, so it survives the path-derived session id (new project) and the destination a
+// clone resolves to.
+type createSwitch struct {
+	kind    flowKind
+	sessKey string // flowWorktree: the parent session whose new worktree to land on
+	wtName  string // flowWorktree: the created worktree's name
+	// prevSessions is the set of session keys that existed before a flowNewProject/
+	// flowClone create, so the one missing from it afterward is the new project.
+	prevSessions map[string]bool
+}
+
+// armCreateSwitch records, for a create flow, what the dashboard should switch to once the
+// background child succeeds. A worktree create knows its (session, name) up front; a new
+// project / clone cannot (the session id is derived from a path the tui never sees), so it
+// snapshots the current session keys and finds the new one after the reload. A re-pick
+// (flowAgentOnly) changes nothing to land on, so it arms nothing.
+func (m *DashboardModel) armCreateSwitch() {
+	f := m.flow
+	if f == nil {
+		return
+	}
+	switch f.kind {
+	case flowWorktree:
+		m.pendingSwitch = &createSwitch{kind: f.kind, sessKey: f.sessKey, wtName: f.wtName}
+	case flowNewProject, flowClone:
+		m.pendingSwitch = &createSwitch{kind: f.kind, prevSessions: m.sessionKeySet()}
+	}
+}
+
+// resolveCreateSwitch consumes a create flow's armed switch after its child returns. On
+// success it locates the new worktree (flowWorktree) or new project (flowNewProject/
+// flowClone) in the just-reloaded views and, when found, records it as the switch target
+// and quits so the cmd layer execs `eme switch`. A failed child, an absent target (a
+// silent no-op, or a name that resolved to an existing worktree), or no arm all leave the
+// dashboard in place.
+func (m *DashboardModel) resolveCreateSwitch(actionErr error) tea.Cmd {
+	cs := m.pendingSwitch
+	if cs == nil {
+		return nil
+	}
+	m.pendingSwitch = nil
+	if actionErr != nil {
+		return nil // the create failed; refresh already surfaced why — stay put
+	}
+	sid, wt, ok := cs.target(m.views)
+	if !ok {
+		return nil
+	}
+	m.leaving = true
+	m.leaveSession, m.leaveWorktree = sid, wt
+	return tea.Quit
+}
+
+// target finds the session id + worktree name the completed create should switch to,
+// against the post-create views. ok is false when the expected entry is absent, so the
+// caller stays on the dashboard instead of switching to something that is not there.
+func (cs *createSwitch) target(views []SessionView) (sessionID, worktree string, ok bool) {
+	switch cs.kind {
+	case flowWorktree:
+		for si := range views {
+			if sessionKey(views[si]) != cs.sessKey {
+				continue
+			}
+			for i := range views[si].Worktrees {
+				if w := views[si].Worktrees[i]; w.Name == cs.wtName {
+					return w.SessionID, w.Name, true
+				}
+			}
+		}
+	case flowNewProject, flowClone:
+		for si := range views {
+			if cs.prevSessions[sessionKey(views[si])] {
+				continue
+			}
+			if w := landingWorktree(views[si]); w != nil {
+				return w.SessionID, w.Name, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// landingWorktree picks the worktree to land on in a freshly created project: its main
+// worktree (every project layout — nested-bare, adopted, plain — registers one), falling
+// back to the first worktree so a switch still happens if "main" is ever absent.
+func landingWorktree(sv SessionView) *WorktreeView {
+	for i := range sv.Worktrees {
+		if sv.Worktrees[i].IsMain || sv.Worktrees[i].Name == "main" {
+			return &sv.Worktrees[i]
+		}
+	}
+	if len(sv.Worktrees) > 0 {
+		return &sv.Worktrees[0]
+	}
+	return nil
+}
+
+// sessionKeySet snapshots the identity of every session currently in the view-model, so a
+// new-project / clone flow can tell which session is new once its child returns.
+func (m *DashboardModel) sessionKeySet() map[string]bool {
+	keys := make(map[string]bool, len(m.views))
+	for si := range m.views {
+		keys[sessionKey(m.views[si])] = true
+	}
+	return keys
 }
 
 // flowArgs is the pure mapping from the active flow + chosen agent to the `eme` child argv —

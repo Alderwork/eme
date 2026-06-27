@@ -142,6 +142,13 @@ type DashboardModel struct {
 	leaving       bool
 	leaveSession  string
 	leaveWorktree string
+	// pendingSwitch, when set, records that a just-dispatched create flow (new project,
+	// clone, or worktree) should — once its background child returns successfully — move
+	// the tmux client onto the freshly created window, the same quit-then-`eme switch`
+	// handoff Enter uses. It outlives closeModal (which clears flow) because the child only
+	// reports completion after the modal is gone; resolveCreateSwitch consumes it. nil for
+	// every non-create action.
+	pendingSwitch *createSwitch
 	// reload re-reads the FULL view-model (status + git diff, via reconcile) after a
 	// child action returns. May be nil (tests), in which case the list is not refreshed.
 	reload func() ([]SessionView, error)
@@ -739,6 +746,13 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.refresh(msg.err, msg.output)
+		// A create flow (n/g/c) that armed a switch now lands the client on the freshly
+		// created window: refresh has reloaded the view-model, so resolveCreateSwitch can
+		// find what is new, record it as the switch target, and quit — the cmd layer then
+		// execs `eme switch`, exactly as Enter does.
+		if cmd := m.resolveCreateSwitch(msg.err); cmd != nil {
+			return m, cmd
+		}
 	case tickMsg:
 		m.tickReload()
 		cmds := []tea.Cmd{m.tick()}

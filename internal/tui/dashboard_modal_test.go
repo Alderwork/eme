@@ -427,6 +427,109 @@ func TestModalFlow_CloneFallsBackWhenUnwired(t *testing.T) {
 	}
 }
 
+// wireSized installs the fake modal factories and a window size on a model built with a
+// custom reload, so create-then-switch flows can be driven against a reload that reflects
+// the freshly created session/worktree.
+func wireSized(t *testing.T, reload func() ([]SessionView, error)) *DashboardModel {
+	t.Helper()
+	m := NewDashboard(sampleViews(), reload)
+	wireModals(m)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 32})
+	return m
+}
+
+// TestModalFlow_WorktreeCreateSwitches: after `c` creates a worktree, a successful child
+// makes the dashboard record the new worktree as the switch target and quit, so the cmd
+// layer execs `eme switch` onto it.
+func TestModalFlow_WorktreeCreateSwitches(t *testing.T) {
+	reload := func() ([]SessionView, error) {
+		v := sampleViews()
+		v[0].Worktrees = append(v[0].Worktrees, WorktreeView{Name: "hi", Branch: "hi", SessionID: "myapp"})
+		return v, nil
+	}
+	m := wireSized(t, reload) // cursor rests on the myapp header → flow targets myapp
+
+	m.Update(runeKey('c'))
+	m.Update(typeText("hi"))
+	m.Update(enter()) // → agent picker
+	m.Update(enter()) // choose claude → dispatch + arm the switch
+	if m.pendingSwitch == nil {
+		t.Fatal("a worktree create should arm a pending switch")
+	}
+
+	_, cmd := m.Update(actionFinishedMsg{err: nil})
+	sess, wt, ok := m.SwitchTarget()
+	if !ok || sess != "myapp" || wt != "hi" {
+		t.Fatalf("SwitchTarget = (%q,%q,%v), want (myapp,hi,true)", sess, wt, ok)
+	}
+	if m.pendingSwitch != nil {
+		t.Error("pendingSwitch should clear once consumed")
+	}
+	if cmd == nil {
+		t.Fatal("a successful create should return a command")
+	}
+	if _, isQuit := cmd().(tea.QuitMsg); !isQuit {
+		t.Error("a successful create should quit so bubbletea restores the terminal before the switch")
+	}
+}
+
+// TestModalFlow_NewProjectSwitches: after `n` creates a project, a successful child makes
+// the dashboard switch to the new project's main worktree — identified by diffing the
+// session set, since the tui never sees the path-derived session id.
+func TestModalFlow_NewProjectSwitches(t *testing.T) {
+	reload := func() ([]SessionView, error) {
+		return append(sampleViews(), SessionView{
+			DisplayName: "alpha", Root: "/code/alpha",
+			Worktrees: []WorktreeView{{Name: "main", Branch: "main", SessionID: "alpha-9f", IsMain: true}},
+		}), nil
+	}
+	m := wireSized(t, reload)
+
+	m.Update(runeKey('n'))
+	m.Update(enter()) // pick /code/alpha
+	m.Update(enter()) // choose claude → dispatch + snapshot {myapp, api}
+
+	_, cmd := m.Update(actionFinishedMsg{err: nil})
+	sess, wt, ok := m.SwitchTarget()
+	if !ok || sess != "alpha-9f" || wt != "main" {
+		t.Fatalf("SwitchTarget = (%q,%q,%v), want (alpha-9f,main,true)", sess, wt, ok)
+	}
+	if cmd == nil {
+		t.Fatal("a successful new project should quit so the caller switches")
+	}
+}
+
+// TestModalFlow_CreateFailureDoesNotSwitch: a child that exits non-zero clears the armed
+// switch and keeps the dashboard up (the notice explains the failure) rather than exec'ing
+// a switch to a window that was never created.
+func TestModalFlow_CreateFailureDoesNotSwitch(t *testing.T) {
+	m := sized(t) // reload nil — a failed create never reaches the reload anyway
+	m.Update(runeKey('c'))
+	m.Update(typeText("hi"))
+	m.Update(enter())
+	m.Update(enter()) // arm the switch
+
+	m.Update(actionFinishedMsg{err: fakeExit(1)})
+	if _, _, ok := m.SwitchTarget(); ok {
+		t.Fatal("a failed create must not record a switch target")
+	}
+	if m.pendingSwitch != nil {
+		t.Error("pendingSwitch should clear even when the create fails")
+	}
+}
+
+// TestModalFlow_AgentRepickArmsNoSwitch: re-picking a worktree's agent (A) is not a create,
+// so it must not arm a switch — the user stays on the dashboard.
+func TestModalFlow_AgentRepickArmsNoSwitch(t *testing.T) {
+	m := sized(t)
+	m.Update(runeKey('j')) // header → myapp/main worktree
+	m.Update(runeKey('A'))
+	m.Update(enter()) // choose the agent → runFlow
+	if m.pendingSwitch != nil {
+		t.Fatal("an agent re-pick must not arm a create switch")
+	}
+}
+
 // TestModalFlow_CloneRepoCancelAborts: Esc on the repo picker creates nothing.
 func TestModalFlow_CloneRepoCancelAborts(t *testing.T) {
 	m := sized(t)

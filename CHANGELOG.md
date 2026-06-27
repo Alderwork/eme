@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The dashboard now switches you into the new window after you create something
+  from it: pressing `n` (new project), `g` (clone), or `c` (new worktree) and
+  finishing the pickers lands the tmux client on the freshly created window once
+  the agent is set up — the same handoff `Enter` already does, instead of leaving
+  you on the dashboard. A failed create stays put and shows why.
+
 ### Planned
 
 - Full worktree-level agent status polling in the dashboard.

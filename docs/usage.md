@@ -128,8 +128,9 @@ The tree uses vim/nvim-style motions — sessions fold like a file tree.
 | `←` / `h` | Fold a session (from a worktree, fold its parent and jump to the header) |
 | `Enter` / `o` | On a worktree: switch to it · On a session header: toggle fold |
 | `p` | Preview the selected worktree's live pane output in a side panel (read-only) |
-| `n` | New project |
-| `c` | Create worktree in the session under the cursor |
+| `n` | New project (switches you into its window once created) |
+| `g` | Clone a GitHub repo into a new project (switches you in once created) |
+| `c` | Create worktree in the session under the cursor (switches you into it once created) |
 | `d` | Kill the worktree, or the whole project on a `main`/header row |
 | `a` | Toggle agent in the selected worktree |
 | `A` | Pick the selected worktree's agent from the catalog |
