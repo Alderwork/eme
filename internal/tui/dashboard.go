@@ -702,14 +702,25 @@ func (m *DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pending = &killTarget{sessionID: sessionKey(sv), isMain: true, label: "project " + sv.DisplayName}
 				m.notice = ""
 			} else if w := m.selected(); w != nil {
-				t := &killTarget{sessionID: w.SessionID, worktreeName: w.Name, isMain: w.IsMain}
-				if w.IsMain {
-					t.label = "project " + m.views[m.rows[m.cursor].session].DisplayName
-				} else {
-					t.label = "worktree " + w.Name
+				sv := m.views[m.rows[m.cursor].session]
+				switch {
+				case w.IsMain && len(sv.Worktrees) > 1:
+					// The main worktree is the project anchor — it cannot be removed on its
+					// own (the CLI's killWorktree refuses it too), so deleting it takes the
+					// whole project, every sibling worktree included. Refuse here so a d on a
+					// worktree row never silently wipes the project the user only meant to
+					// trim one worktree from; the deliberate whole-project delete lives on the
+					// session header one row up.
+					m.notice = "main is the project root — to delete just one worktree pick that row; press d on " + sv.DisplayName + "'s header to remove the whole project"
+				case w.IsMain:
+					// Lone main: it is the project's only worktree, so removing it is
+					// unambiguously a project delete — no siblings to lose by surprise.
+					m.pending = &killTarget{sessionID: w.SessionID, worktreeName: w.Name, isMain: true, label: "project " + sv.DisplayName}
+					m.notice = ""
+				default:
+					m.pending = &killTarget{sessionID: w.SessionID, worktreeName: w.Name, isMain: false, label: "worktree " + w.Name}
+					m.notice = ""
 				}
-				m.pending = t
-				m.notice = ""
 			}
 		}
 	case tea.WindowSizeMsg:

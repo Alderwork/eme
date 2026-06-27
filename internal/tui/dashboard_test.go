@@ -80,12 +80,15 @@ func TestDashboardFlattenAndCursorClamp(t *testing.T) {
 // f forgets it (keeps files). y confirms here; TestDashboardKillContext_MainForget
 // covers f, and TestDashboardKillContext_MainCancel covers dismissal. The destructive
 // action stays on y so a stray double-d (the old muscle memory) still cancels.
+// api/main (cursor 4) is the project's only worktree, so d on it is unambiguously a
+// project delete — main rows of multi-worktree projects are guarded instead (see
+// TestDashboardKillContext_MainWithSiblingsGuarded).
 func TestDashboardKillContext_MainKillsSession(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1 // myapp/main (IsMain)
+	m.cursor = 4 // api/main (IsMain, the only worktree)
 	m.Update(runeKey('d'))
-	if m.pending == nil || !m.pending.isMain || m.pending.sessionID != "myapp" {
-		t.Fatalf("pending = %+v, want isMain session kill of myapp", m.pending)
+	if m.pending == nil || !m.pending.isMain || m.pending.sessionID != "api" {
+		t.Fatalf("pending = %+v, want isMain session kill of api", m.pending)
 	}
 	_, cmd := m.Update(runeKey('y')) // y = delete files
 	if cmd == nil {
@@ -99,7 +102,7 @@ func TestDashboardKillContext_MainKillsSession(t *testing.T) {
 // A stray double-d must NOT delete: after staging with d, a second d cancels.
 func TestDashboardKillContext_DoubleDCancels(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1
+	m.cursor = 4                     // api/main: a lone main stages a project confirm to cancel
 	m.Update(runeKey('d'))           // stage
 	_, cmd := m.Update(runeKey('d')) // second d = cancel, not delete
 	if cmd != nil || m.pending != nil {
@@ -111,7 +114,7 @@ func TestDashboardKillContext_DoubleDCancels(t *testing.T) {
 // rather than deleting — the disk-safe outcome surfaced in the UI.
 func TestDashboardKillContext_MainForget(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1 // myapp/main (IsMain)
+	m.cursor = 4 // api/main (IsMain, the only worktree)
 	m.Update(runeKey('d'))
 	_, cmd := m.Update(runeKey('f'))
 	if cmd == nil {
@@ -125,11 +128,28 @@ func TestDashboardKillContext_MainForget(t *testing.T) {
 // Any key other than d/f cancels a staged project confirm without acting.
 func TestDashboardKillContext_MainCancel(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1
+	m.cursor = 4 // api/main — the project's only worktree, so d stages a project delete
 	m.Update(runeKey('d'))
 	_, cmd := m.Update(runeKey('n'))
 	if cmd != nil || m.pending != nil {
 		t.Error("cancel should clear pending and return no command")
+	}
+}
+
+// A worktree row must never escalate to a whole-project delete. The main worktree is the
+// project anchor and cannot be removed on its own, so pressing d on it while sibling
+// worktrees exist refuses with a guiding notice (pointing at the header for a deliberate
+// project delete) instead of silently destroying every worktree in the project — the
+// reported footgun where one-worktree intent wiped the whole project.
+func TestDashboardKillContext_MainWithSiblingsGuarded(t *testing.T) {
+	m := NewDashboard(sampleViews(), nil)
+	m.cursor = 1 // myapp/main — IsMain, but myapp also has the feat worktree
+	m.Update(runeKey('d'))
+	if m.pending != nil {
+		t.Fatalf("pending = %+v, want no project delete staged from a worktree row with siblings", m.pending)
+	}
+	if m.notice == "" {
+		t.Error("want a notice guiding the user to the project header for a whole-project delete")
 	}
 }
 
@@ -180,7 +200,7 @@ func (f fakeExit) ExitCode() int { return int(f) }
 // pending tracker once consumed.
 func TestDashboardEscalatesOnUnpushedExit(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1 // myapp/main (IsMain)
+	m.cursor = 0 // myapp header — the deliberate whole-project delete (main row is guarded)
 	m.Update(runeKey('d'))
 	m.Update(runeKey('y')) // dispatch the plain delete; records lastDelete
 	if m.lastDelete == nil {
@@ -206,7 +226,7 @@ func TestDashboardEscalatesOnUnpushedExit(t *testing.T) {
 // escalated confirm — escalation is reserved for the guard firing.
 func TestDashboardGenericFailureDoesNotEscalate(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 1
+	m.cursor = 0 // myapp header — dispatch a real project delete (main row is guarded)
 	m.Update(runeKey('d'))
 	m.Update(runeKey('y'))
 	m.Update(actionFinishedMsg{err: fakeExit(1)})
@@ -266,10 +286,12 @@ func TestDashboardCreateWorktreeGatedOnPlain(t *testing.T) {
 }
 
 // TestDashboardKillContextHeaderKillsSession: d on a session header stages a kill of
-// the whole session (isMain), the same as d on its main worktree.
+// the whole session (isMain). The header is the deliberate whole-project delete — even
+// for a multi-worktree project like myapp, where d on the main worktree row is guarded
+// (TestDashboardKillContext_MainWithSiblingsGuarded) so only the header nukes everything.
 func TestDashboardKillContextHeaderKillsSession(t *testing.T) {
 	m := NewDashboard(sampleViews(), nil)
-	m.cursor = 0 // myapp header
+	m.cursor = 0 // myapp header (myapp has main + feat)
 	m.Update(runeKey('d'))
 	if m.pending == nil || !m.pending.isMain || m.pending.sessionID != "myapp" {
 		t.Fatalf("pending = %+v, want isMain session kill of myapp", m.pending)
