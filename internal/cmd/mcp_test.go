@@ -133,3 +133,75 @@ func TestMCPCreateWorktreeReadsBack(t *testing.T) {
 		t.Fatalf("worktree = %+v", w)
 	}
 }
+
+func seedOneProject(t *testing.T, dir string) {
+	t.Helper()
+	statePath = dir + "/state.json"
+	seed := &state.State{Version: state.Version, Sessions: []state.Session{{
+		ID: "id1", DisplayName: "demo", Root: dir, TmuxName: "demo", Layout: state.LayoutNestedBare,
+		Worktrees: []state.Worktree{{Name: "main", Branch: "main", Path: dir + "/main", TmuxWindowID: "@1"}},
+	}}}
+	if err := seed.Save(statePath); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMCPStartAgentIdempotentWhenRunning(t *testing.T) {
+	dir := t.TempDir()
+	oldState, oldRun, oldRunning := statePath, runEme, agentRunningFn
+	defer func() { statePath, runEme, agentRunningFn = oldState, oldRun, oldRunning }()
+	seedOneProject(t, dir)
+	agentRunningFn = func(w *state.Worktree) (bool, error) { return true, nil }
+	called := false
+	runEme = func(args ...string) (string, string, error) { called = true; return "", "", nil }
+
+	r, err := mcpStartAgent(context.Background(), "demo", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Fatal("runEme should not be called when an agent is already running")
+	}
+	if !r.Running || r.Message != "agent already running" {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+func TestMCPStartAgentLaunchesWhenIdle(t *testing.T) {
+	dir := t.TempDir()
+	oldState, oldRun, oldRunning := statePath, runEme, agentRunningFn
+	defer func() { statePath, runEme, agentRunningFn = oldState, oldRun, oldRunning }()
+	seedOneProject(t, dir)
+	agentRunningFn = func(w *state.Worktree) (bool, error) { return false, nil }
+	var gotArgs []string
+	runEme = func(args ...string) (string, string, error) { gotArgs = args; return "", "", nil }
+
+	r, err := mcpStartAgent(context.Background(), "demo", "main", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Running || r.Message != "agent started" {
+		t.Fatalf("result = %+v", r)
+	}
+	// expect a bare `agent id1 main` toggle (no --set, since no override)
+	if len(gotArgs) != 3 || gotArgs[0] != "agent" || gotArgs[1] != "id1" || gotArgs[2] != "main" {
+		t.Fatalf("args = %v", gotArgs)
+	}
+}
+
+func TestMCPStopAgentNoopWhenIdle(t *testing.T) {
+	dir := t.TempDir()
+	oldState, oldRun, oldRunning := statePath, runEme, agentRunningFn
+	defer func() { statePath, runEme, agentRunningFn = oldState, oldRun, oldRunning }()
+	seedOneProject(t, dir)
+	agentRunningFn = func(w *state.Worktree) (bool, error) { return false, nil }
+	runEme = func(args ...string) (string, string, error) { t.Fatal("runEme should not run"); return "", "", nil }
+
+	r, err := mcpStopAgent(context.Background(), "demo", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Running || r.Message != "no agent running" {
+		t.Fatalf("result = %+v", r)
+	}
+}

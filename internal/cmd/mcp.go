@@ -215,6 +215,77 @@ func mcpCloneRepo(ctx context.Context, repo, agent string) (mcp.Project, error) 
 	return toMCPProject(sess, snap), nil
 }
 
+func mcpStartAgent(ctx context.Context, ref, worktree, agent string) (mcp.AgentResult, error) {
+	if worktree == "" {
+		worktree = "main"
+	}
+	s, err := loadState()
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	sess, err := resolveSession(s, ref)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	w, err := resolveWorktree(sess, worktree)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	running, err := agentRunningFn(w)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	res := mcp.AgentResult{Project: sess.DisplayName, Worktree: w.Name}
+	if running {
+		res.Running = true
+		res.Message = "agent already running"
+		return res, nil
+	}
+	if agent != "" && agent != "none" {
+		if _, stderr, err := runEme("agent", sess.ID, w.Name, "--set", agent); err != nil {
+			return mcp.AgentResult{}, mcpExecErr(stderr, err)
+		}
+	}
+	if _, stderr, err := runEme("agent", sess.ID, w.Name); err != nil {
+		return mcp.AgentResult{}, mcpExecErr(stderr, err)
+	}
+	res.Running = true
+	res.Message = "agent started"
+	return res, nil
+}
+
+func mcpStopAgent(ctx context.Context, ref, worktree string) (mcp.AgentResult, error) {
+	if worktree == "" {
+		worktree = "main"
+	}
+	s, err := loadState()
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	sess, err := resolveSession(s, ref)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	w, err := resolveWorktree(sess, worktree)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	running, err := agentRunningFn(w)
+	if err != nil {
+		return mcp.AgentResult{}, err
+	}
+	res := mcp.AgentResult{Project: sess.DisplayName, Worktree: w.Name}
+	if !running {
+		res.Message = "no agent running"
+		return res, nil
+	}
+	if _, stderr, err := runEme("agent", sess.ID, w.Name); err != nil {
+		return mcp.AgentResult{}, mcpExecErr(stderr, err)
+	}
+	res.Message = "sent interrupt to agent"
+	return res, nil
+}
+
 func mcpCreateWorktree(ctx context.Context, ref, name, agent string) (mcp.Worktree, error) {
 	if agent == "" {
 		agent = "none"
